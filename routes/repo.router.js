@@ -4,7 +4,7 @@ const multer = require("multer");
 const repoController = require("../controllers/repoController");
 const { pushRepo } = require("../controllers/push");
 const { addFiles } = require("../controllers/addController");
-
+const { createCommit } = require("../controllers/commitController");
 const repoRouter = express.Router();
 
 const upload = multer({
@@ -13,7 +13,7 @@ const upload = multer({
 
 // NEW ROUTE
 repoRouter.post("/add/:id", upload.array("files"), addFiles);
-
+repoRouter.post("/commit/:id", createCommit);
 repoRouter.post("/create", repoController.createRepository);
 repoRouter.get("/all", repoController.getAllRepositories);
 repoRouter.get("/:id", repoController.fetchRepositoryById);
