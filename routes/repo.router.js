@@ -6,6 +6,7 @@ const { pushRepo } = require("../controllers/push");
 const { addFiles } = require("../controllers/addController");
 const { createCommit } = require("../controllers/commitController");
 const repoRouter = express.Router();
+const { getFile } = require("../controllers/fileController");
 
 const upload = multer({
   dest: "uploads/",
@@ -23,6 +24,7 @@ repoRouter.get("/user/:userID", repoController.fetchRepositoriesForCurrentUser);
 repoRouter.put("/update/:id", repoController.updateRepositoryById);
 repoRouter.delete("/delete/:id", repoController.deleteRepositoryById);
 repoRouter.patch("/toggle/:id", repoController.toggleVisibilityById);
+repoRouter.get("/file/:id/:filename", getFile);
 
 module.exports = repoRouter;
 
