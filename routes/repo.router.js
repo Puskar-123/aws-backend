@@ -9,6 +9,8 @@ const repoRouter = express.Router();
 const { getFile } = require("../controllers/fileController");
 const { pullRepo } = require("../controllers/pull");
 const { getCommitHistory } = require("../controllers/historyController");
+const { previewFile } = require("../controllers/previewController");
+
 
 const upload = multer({
   dest: "uploads/",
@@ -30,5 +32,6 @@ repoRouter.get("/file/:id/:filename", getFile);
 repoRouter.post("/pull/:id", pullRepo);
 repoRouter.get("/:id", repoController.fetchRepositoryById);
 repoRouter.get("/history/:id", getCommitHistory);
+repoRouter.get("/preview/:id/:filename",previewFile);
 
 module.exports = repoRouter;
