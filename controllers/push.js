@@ -24,22 +24,53 @@ async function pushRepo(req, res) {
     const commitHistory = [];
 
     for (const commitDir of commitDirs) {
+
       const commitPath = path.join(commitsPath, commitDir);
       const files = await fs.readdir(commitPath);
+
+      let commitMessage = "";
+      let commitTime = new Date();
 
       const commitFiles = [];
 
       for (const file of files) {
+
         const filePath = path.join(commitPath, file);
         const fileContent = await fs.readFile(filePath);
 
         const key = `commits/${commitDir}/${file}`;
 
+        // Upload every file to S3
         await s3.upload({
           Bucket: S3_BUCKET,
           Key: key,
           Body: fileContent,
         }).promise();
+
+        // Read commit.json
+        if (file === "commit.json") {
+
+          try {
+
+            const commitInfo = JSON.parse(
+              fileContent.toString()
+            );
+
+            commitMessage = commitInfo.message || "No Message";
+            commitTime = commitInfo.time || new Date();
+
+          } catch (err) {
+
+            console.error("Invalid commit.json", err);
+
+            commitMessage = "Unknown Commit";
+            commitTime = new Date();
+
+          }
+
+          // Do NOT show commit.json
+          continue;
+        }
 
         const fileData = {
           filename: file,
@@ -48,20 +79,18 @@ async function pushRepo(req, res) {
 
         commitFiles.push(fileData);
 
-        // Don't show commit.json in repository files
-        if (file !== "commit.json") {
-          latestFiles.set(file, fileData);
-        }
+        // Latest version of every file
+        latestFiles.set(file, fileData);
       }
 
       commitHistory.push({
-        message: `Commit ${commitDir}`,
+        message: commitMessage,
         files: commitFiles,
-        time: new Date(),
+        time: commitTime,
       });
     }
 
-    // Latest files only
+    // Latest repository files
     repo.content = [...latestFiles.values()];
 
     // Complete commit history
@@ -76,7 +105,9 @@ async function pushRepo(req, res) {
     });
 
   } catch (err) {
+
     console.error(err);
+
     return res.status(500).json({
       error: "Push failed",
     });

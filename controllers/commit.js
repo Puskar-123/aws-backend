@@ -21,8 +21,15 @@ async function commitRepo(message) {
     }
 
     await fs.writeFile(
-      path.join(commitDir, "commit.json"),
-      JSON.stringify({ message, date: new Date().toISOString() })
+    path.join(commitDir, "commit.json"),
+    JSON.stringify(
+      {
+        message,
+        time: new Date().toISOString(),
+      },
+      null,
+      2
+      )
     );
 
     console.log(`Commit ${commitID} created with message: ${message}`);
