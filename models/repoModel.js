@@ -8,31 +8,57 @@ const RepositorySchema = new Schema(
     required: true,
     unique: true,
   },
+
   description: {
     type: String,
   },
+
+  // Latest files
   content: [
-  {
-    filename: {
-      type: String,
-      required: true,
+    {
+      filename: {
+        type: String,
+        required: true,
+      },
+      path: {
+        type: String,
+        required: true,
+      },
     },
-    path: {
-      type: String,
-      required: true,
-    }
-  }
   ],
+
+  // Commit History
+  commits: [
+    {
+      message: {
+        type: String,
+      },
+
+      files: [
+        {
+          filename: String,
+          path: String,
+        },
+      ],
+
+      time: {
+        type: Date,
+      },
+    },
+  ],
+
   visibility: {
     type: String,
     enum: ["public", "private"],
-    default: "public"
+    default: "public",
   },
+
   owner: {
     type: Schema.Types.ObjectId,
     ref: "User",
     required: true,
   },
+
   issues: [
     {
       type: Schema.Types.ObjectId,
@@ -41,11 +67,8 @@ const RepositorySchema = new Schema(
   ],
 },
 {
-  timestamps: true
+  timestamps: true,
 }
 );
 
-const Repository = mongoose.model("Repository", RepositorySchema);
-module.exports = Repository;
-
-
+module.exports = mongoose.model("Repository", RepositorySchema);
