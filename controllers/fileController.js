@@ -9,7 +9,19 @@ async function getFile(req, res) {
     console.log("Filename:", filename);
 
     // 👇 Add these logs here
+    console.log("Mongo URI:", process.env.MONGODB_URI);
+
+    const allRepos = await Repository.find();
+
+    console.log("Total repos:", allRepos.length);
+    console.log(
+      "IDs:",
+      allRepos.map(r => r._id.toString())
+    );
+
     const repo = await Repository.findById(id);
+
+    console.log("Repository:", repo);
 
     console.log("Repository:", repo);
 
