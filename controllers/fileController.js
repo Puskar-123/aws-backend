@@ -5,8 +5,13 @@ async function getFile(req, res) {
   try {
     const { id, filename } = req.params;
 
-    // Find repository
+    console.log("Repo ID:", id);
+    console.log("Filename:", filename);
+
+    // 👇 Add these logs here
     const repo = await Repository.findById(id);
+
+    console.log("Repository:", repo);
 
     if (!repo) {
       return res.status(404).json({
@@ -14,7 +19,6 @@ async function getFile(req, res) {
       });
     }
 
-    // Find requested file
     const file = repo.content.find(
       (f) => f.filename === filename
     );
@@ -25,31 +29,16 @@ async function getFile(req, res) {
       });
     }
 
-    // Download file from S3
-    const data = await s3
-      .getObject({
-        Bucket: S3_BUCKET,
-        Key: file.path,
-      })
-      .promise();
+    const data = await s3.getObject({
+      Bucket: S3_BUCKET,
+      Key: file.path,
+    }).promise();
 
-    // Force browser download
     res.setHeader(
       "Content-Disposition",
       `attachment; filename="${filename}"`
     );
 
-    // Preserve content type if available
-    if (data.ContentType) {
-      res.setHeader("Content-Type", data.ContentType);
-    } else {
-      res.setHeader(
-        "Content-Type",
-        "application/octet-stream"
-      );
-    }
-
-    // Send file
     return res.send(data.Body);
 
   } catch (err) {
