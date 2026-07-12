@@ -8,6 +8,7 @@ const { createCommit } = require("../controllers/commitController");
 const repoRouter = express.Router();
 const { getFile } = require("../controllers/fileController");
 const { pullRepo } = require("../controllers/pull");
+const { getCommitHistory } = require("../controllers/historyController");
 
 const upload = multer({
   dest: "uploads/",
@@ -27,5 +28,7 @@ repoRouter.delete("/delete/:id", repoController.deleteRepositoryById);
 repoRouter.patch("/toggle/:id", repoController.toggleVisibilityById);
 repoRouter.get("/file/:id/:filename", getFile);
 repoRouter.post("/pull/:id", pullRepo);
+repoRouter.get("/:id", repoController.fetchRepositoryById);
+repoRouter.get("/history/:id", getCommitHistory);
 
 module.exports = repoRouter;
