@@ -23,24 +23,33 @@ async function getFile(req, res) {
       });
     }
 
-    const data = await s3
-      .getObject({
-        Bucket: S3_BUCKET,
-        Key: file.path,
-      })
-      .promise();
+    const data = await s3.getObject({
+      Bucket: S3_BUCKET,
+      Key: file.path,
+    }).promise();
 
-    res.json({
-      filename,
-      content: data.Body.toString("utf8"),
-    });
+    // Download as original file
+    res.setHeader(
+      "Content-Disposition",
+      `attachment; filename="${file.filename}"`
+    );
+
+    res.setHeader(
+      "Content-Type",
+      data.ContentType || "application/octet-stream"
+    );
+
+    return res.send(data.Body);
 
   } catch (err) {
     console.error(err);
-    res.status(500).json({
-      error: "Unable to read file",
+
+    return res.status(500).json({
+      error: "Unable to download file",
     });
   }
 }
 
-module.exports = { getFile };
+module.exports = {
+  getFile,
+};
