@@ -27,20 +27,3 @@ repoRouter.patch("/toggle/:id", repoController.toggleVisibilityById);
 repoRouter.get("/file/:id/:filename", getFile);
 
 module.exports = repoRouter;
-
-// const express = require("express");
-// const repoController = require("../controllers/repoController");
-// const { pushRepo } = require("../controllers/push");
-// const repoRouter = express.Router();
-
-// repoRouter.post("/repo/create", repoController.createRepository);
-// repoRouter.get("/repo/all", repoController.getAllRepositories);
-// repoRouter.get("/repo/:id", repoController.fetchRepositoryById);
-// repoRouter.post("/repo/push/:id", pushRepo);
-// repoRouter.get("/repo/name/:name", repoController.fetchRepositoryByName);
-// repoRouter.get("/repo/user/:userID", repoController.fetchRepositoriesForCurrentUser);
-// repoRouter.put("/repo/update/:id", repoController.updateRepositoryById);
-// repoRouter.delete("/repo/delete/:id", repoController.deleteRepositoryById);
-// repoRouter.patch("/repo/toggle/:id", repoController.toggleVisibilityById);
-
-// module.exports = repoRouter;
