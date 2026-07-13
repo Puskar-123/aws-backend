@@ -70,34 +70,51 @@ ${description || "No description."}
 Created using CodeHub 🚀
 `;
 
-  await s3.upload({
-    Bucket: S3_BUCKET,
-    Key: readmeKey,
-    Body: readmeContent,
-    ContentType: "text/markdown",
-  }).promise();
+  try {
+
+    console.log("Uploading README to S3...");
+
+    const result = await s3.upload({
+      Bucket: S3_BUCKET,
+      Key: readmeKey,
+      Body: readmeContent,
+      ContentType: "text/markdown",
+    }).promise();
+
+    console.log("✅ README uploaded successfully!");
+    console.log(result);
+
+  } catch (err) {
+
+    console.error("❌ S3 Upload Error:");
+    console.error(err);
+
+    return res.status(500).json({
+      error: "Failed to upload README to S3",
+    });
+
+  }
 
   newRepository.content.push({
     filename: "README.md",
     path: readmeKey,
   });
-      await newRepository.save();
-    }
-        res.status(201).json({
-          message: "Repository created!",
-          repositoryID: newRepository._id,
-        });
 
-      } catch (err) {
-        console.error("FULL ERROR:", err);
-
-        res.status(500).json({
-          error: err.message,
-        });
-      }
-    }
+  await newRepository.save();
+}
   // ✅ GET ALL
-  async function getAllRepositories(req, res) {
+    return res.status(201).json({
+      message: "Repository created!",
+      repository: newRepository,
+    });
+
+  } catch (err) {
+    console.error("FULL ERROR:", err);
+    return res.status(500).json({ error: err.message });
+  }
+}
+
+async function getAllRepositories(req, res) {
     try {
       const repositories = await Repository.find({})
         .populate("owner")
