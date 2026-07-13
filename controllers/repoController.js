@@ -1,24 +1,41 @@
 const mongoose = require("mongoose");
 const Repository = require("../models/repoModel");
+const fs = require("fs");
+const path = require("path");
 
 
 // ✅ CREATE REPOSITORY
 async function createRepository(req, res) {
-  const { owner, name, issues, content, description, visibility } = req.body;
+  const {
+    owner,
+    name,
+    issues,
+    content,
+    description,
+    visibility,
+    addReadme,
+  } = req.body;
 
-  console.log("REQ BODY:", req.body); // ✅ DEBUG
+  console.log("REQ BODY:", req.body);
 
   try {
-    if (!name) {
-      return res.status(400).json({ error: "Repository name is required!" });
-    }
+    if (!name || !name.trim()) {
+      return res.status(400).json({
+        error: "Repository name is required!",
+      });
+     }
 
     if (!owner || !mongoose.Types.ObjectId.isValid(owner)) {
-      return res.status(400).json({ error: "Invalid or missing User ID!" });
+      return res.status(400).json({
+        error: "Invalid or missing User ID!",
+      });
     }
 
-    // ✅ duplicate check (same user)
-    const existingRepo = await Repository.findOne({ name, owner });
+    // Duplicate check
+    const existingRepo = await Repository.findOne({
+      name,
+      owner,
+    });
 
     if (existingRepo) {
       return res.status(400).json({
@@ -26,8 +43,9 @@ async function createRepository(req, res) {
       });
     }
 
+    // Create repository
     const newRepository = new Repository({
-      name,
+      name: name.trim(),
       description: description || "",
       visibility: visibility || "public",
       owner,
@@ -35,16 +53,65 @@ async function createRepository(req, res) {
       issues: issues || [],
     });
 
-    const result = await newRepository.save();
+    await newRepository.save();
+
+    // ==========================
+    // CREATE README.md
+    // ==========================
+
+    if (addReadme) {
+
+      const repoFolder = path.join(
+        __dirname,
+        "..",
+        "uploads",
+        newRepository._id.toString()
+      );
+
+      if (!fs.existsSync(repoFolder)) {
+        fs.mkdirSync(repoFolder, {
+          recursive: true,
+        });
+      }
+
+      const readmePath = path.join(
+        repoFolder,
+        "README.md"
+      );
+
+      const readmeContent = `# ${name}
+
+${description || "No description."}
+
+---
+
+Created using CodeHub 🚀
+`;
+
+      fs.writeFileSync(
+        readmePath,
+        readmeContent
+      );
+
+      newRepository.content.push({
+        filename: "README.md",
+        path: readmePath,
+      });
+
+      await newRepository.save();
+    }
 
     res.status(201).json({
       message: "Repository created!",
-      repositoryID: result._id,
+      repositoryID: newRepository._id,
     });
 
   } catch (err) {
     console.error("FULL ERROR:", err);
-    res.status(500).json({ error: err.message });
+
+    res.status(500).json({
+      error: err.message,
+    });
   }
 }
 
@@ -239,173 +306,196 @@ module.exports = {
 };
 
 
-// const mongoose = require("mongoose");
-// const Repository = require("../models/repoModel");
-// const User = require("../models/userModel");
-// const Issue = require("../models/issueModel");
 
-// async function createRepository(req, res) {
-//   const { owner, name, issues, content, description, visibility } = rq.body;
 
-//   try {
-//     if (!name) {
-//       return res.status(400).json({ error: "Repository name is required!" });
-//     }
 
-//     if (!mongoose.Types.ObjectId.isValid(owner)) {
-//       return res.status(400).json({ error: "Invalid User ID!" });
-//     }
+// ✅ GET ALL
+async function getAllRepositories(req, res) {
+  try {
+    const repositories = await Repository.find({})
+      .populate("owner")
+      .populate("issues");
 
-//     const newRepository = new Repository({
-//       name,
-//       description,
-//       visibility,
-//       owner,
-//       content,
-//       issues,
-//     });
+    res.json(repositories);
 
-//     const result = await newRepository.save();
+  } catch (err) {
+    console.error("FULL ERROR:", err);
+    res.status(500).json({ error: err.message });
+  }
+}
 
-//     res.status(201).json({
-//       message: "Repository created!",
-//       repositoryID: result._id,
-//     });
-//   } catch (err) {
-//     console.error("Error during repository creation : ", err.message);
-//     res.status(500).send("Server error");
-//   }
-// }
 
-// async function getAllRepositories(req, res) {
-//   try {
-//     const repositories = await Repository.find({})
-//       .populate("owner")
-//       .populate("issues");
+// ✅ GET BY ID
+async function fetchRepositoryById(req, res) {
+  const { id } = req.params;
 
-//     res.json(repositories);
-//   } catch (err) {
-//     console.error("Error during fetching repositories : ", err.message);
-//     res.status(500).send("Server error");
-//   }
-// }
+  try {
+    // ✅ FIX: validate id
+    if (!mongoose.Types.ObjectId.isValid(id)) {
+      return res.status(400).json({ error: "Invalid repository ID!" });
+    }
 
-// async function fetchRepositoryById(req, res) {
-//   const { id } = req.params;
-//   try {
-//     const repository = await Repository.find({ _id: id })
-//       .populate("owner")
-//       .populate("issues");
+    const repository = await Repository.findById(id)
+      .populate("owner")
+      .populate("issues");
 
-//     res.json(repository);
-//   } catch (err) {
-//     console.error("Error during fetching repository : ", err.message);
-//     res.status(500).send("Server error");
-//   }
-// }
+    if (!repository) {
+      return res.status(404).json({ error: "Repository not found!" });
+    }
 
-// async function fetchRepositoryByName(req, res) {
-//   const { name } = req.params;
-//   try {
-//     const repository = await Repository.find({ name })
-//       .populate("owner")
-//       .populate("issues");
+    res.json(repository);
 
-//     res.json(repository);
-//   } catch (err) {
-//     console.error("Error during fetching repository : ", err.message);
-//     res.status(500).send("Server error");
-//   }
-// }
+  } catch (err) {
+    console.error("FULL ERROR:", err);
+    res.status(500).json({ error: err.message });
+  }
+}
 
-// async function fetchRepositoriesForCurrentUser(req, res) {
-//   console.log(req.params);
-//   const { userID } = req.params;
 
-//   try {
-//     const repositories = await Repository.find({ owner: userID });
+// ✅ GET BY NAME
+async function fetchRepositoryByName(req, res) {
+  const { name } = req.params;
 
-//     if (!repositories || repositories.length == 0) {
-//       return res.status(404).json({ error: "User Repositories not found!" });
-//     }
-//     console.log(repositories);
-//     res.json({ message: "Repositories found!", repositories });
-//   } catch (err) {
-//     console.error("Error during fetching user repositories : ", err.message);
-//     res.status(500).send("Server error");
-//   }
-// }
+  try {
+    const repository = await Repository.findOne({ name })
+      .populate("owner")
+      .populate("issues");
 
-// async function updateRepositoryById(req, res) {
-//   const { id } = req.params;
-//   const { content, description } = req.body;
+    if (!repository) {
+      return res.status(404).json({ error: "Repository not found!" });
+    }
 
-//   try {
-//     const repository = await Repository.findById(id);
-//     if (!repository) {
-//       return res.status(404).json({ error: "Repository not found!" });
-//     }
+    res.json(repository);
 
-//     repository.content.push(content);
-//     repository.description = description;
+  } catch (err) {
+    console.error("FULL ERROR:", err);
+    res.status(500).json({ error: err.message });
+  }
+}
 
-//     const updatedRepository = await repository.save();
 
-//     res.json({
-//       message: "Repository updated successfully!",
-//       repository: updatedRepository,
-//     });
-//   } catch (err) {
-//     console.error("Error during updating repository : ", err.message);
-//     res.status(500).send("Server error");
-//   }
-// }
+// ✅ USER REPOS
+async function fetchRepositoriesForCurrentUser(req, res) {
+  const { userID } = req.params;
 
-// async function toggleVisibilityById(req, res) {
-//   const { id } = req.params;
+  try {
+    if (!mongoose.Types.ObjectId.isValid(userID)) {
+      return res.status(400).json({ error: "Invalid User ID!" });
+    }
 
-//   try {
-//     const repository = await Repository.findById(id);
-//     if (!repository) {
-//       return res.status(404).json({ error: "Repository not found!" });
-//     }
+    const repositories = await Repository.find({ owner: userID });
 
-//     repository.visibility = !repository.visibility;
+    if (!repositories.length) {
+      return res.status(404).json({ error: "No repositories found!" });
+    }
 
-//     const updatedRepository = await repository.save();
+    res.json({ repositories });
 
-//     res.json({
-//       message: "Repository visibility toggled successfully!",
-//       repository: updatedRepository,
-//     });
-//   } catch (err) {
-//     console.error("Error during toggling visibility : ", err.message);
-//     res.status(500).send("Server error");
-//   }
-// }
+  } catch (err) {
+    console.error("FULL ERROR:", err);
+    res.status(500).json({ error: err.message });
+  }
+}
 
-// async function deleteRepositoryById(req, res) {
-//   const { id } = req.params;
-//   try {
-//     const repository = await Repository.findByIdAndDelete(id);
-//     if (!repository) {
-//       return res.status(404).json({ error: "Repository not found!" });
-//     }
 
-//     res.json({ message: "Repository deleted successfully!" });
-//   } catch (err) {
-//     console.error("Error during deleting repository : ", err.message);
-//     res.status(500).send("Server error");
-//   }
-// }
+// ✅ UPDATE
+async function updateRepositoryById(req, res) {
+  const { id } = req.params;
+  const { content, description } = req.body;
 
-// module.exports = {
-//   createRepository,
-//   getAllRepositories,
-//   fetchRepositoryById,
-//   fetchRepositoryByName,
-//   fetchRepositoriesForCurrentUser,
-//   updateRepositoryById,
-//   toggleVisibilityById,
-//   deleteRepositoryById,
-// };
+  try {
+    if (!mongoose.Types.ObjectId.isValid(id)) {
+      return res.status(400).json({ error: "Invalid repository ID!" });
+    }
+
+    const repository = await Repository.findById(id);
+
+    if (!repository) {
+      return res.status(404).json({ error: "Repository not found!" });
+    }
+
+    if (content) repository.content.push(content);
+    if (description) repository.description = description;
+
+    const updatedRepository = await repository.save();
+
+    res.json({
+      message: "Repository updated!",
+      repository: updatedRepository,
+    });
+
+  } catch (err) {
+    console.error("FULL ERROR:", err);
+    res.status(500).json({ error: err.message });
+  }
+}
+
+
+// ✅ TOGGLE VISIBILITY
+async function toggleVisibilityById(req, res) {
+  const { id } = req.params;
+
+  try {
+    if (!mongoose.Types.ObjectId.isValid(id)) {
+      return res.status(400).json({ error: "Invalid repository ID!" });
+    }
+
+    const repository = await Repository.findById(id);
+
+    if (!repository) {
+      return res.status(404).json({ error: "Repository not found!" });
+    }
+
+    repository.visibility =
+      repository.visibility === "public" ? "private" : "public";
+
+    const updatedRepository = await repository.save();
+
+    res.json({
+      message: "Visibility updated!",
+      repository: updatedRepository,
+    });
+
+  } catch (err) {
+    console.error("FULL ERROR:", err);
+    res.status(500).json({ error: err.message });
+  }
+}
+
+
+// ✅ DELETE
+async function deleteRepositoryById(req, res) {
+  const { id } = req.params;
+
+  try {
+    if (!mongoose.Types.ObjectId.isValid(id)) {
+      return res.status(400).json({ error: "Invalid repository ID!" });
+    }
+
+    const repository = await Repository.findByIdAndDelete(id);
+
+    if (!repository) {
+      return res.status(404).json({ error: "Repository not found!" });
+    }
+
+    res.json({ message: "Repository deleted!" });
+
+  } catch (err) {
+    console.error("FULL ERROR:", err);
+    res.status(500).json({ error: err.message });
+  }
+}
+
+
+module.exports = {
+  createRepository,
+  getAllRepositories,
+  fetchRepositoryById,
+  fetchRepositoryByName,
+  fetchRepositoriesForCurrentUser,
+  updateRepositoryById,
+  toggleVisibilityById,
+  deleteRepositoryById,
+};
+
+
