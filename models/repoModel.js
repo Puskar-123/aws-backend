@@ -51,6 +51,7 @@ const RepositorySchema = new Schema(
           storageKey: String,
           hash: String,
           status: String,
+          oldPath: String,
         },
       ],
 
@@ -74,6 +75,11 @@ const RepositorySchema = new Schema(
         email: String,
       },
       deletedFiles: [String],
+      summary: {
+        filesChanged: Number,
+        additions: Number,
+        deletions: Number,
+      },
 
       time: {
         type: Date,

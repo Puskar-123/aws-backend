@@ -142,8 +142,10 @@ test("Express 4 wildcard file routes are registered before the generic repositor
   const router = require("../routes/repo.router");
   const paths = router.stack.filter((layer) => layer.route).map((layer) => layer.route.path);
   for (const routePath of ["/preview/:id/*", "/file/:id/*"]) assert(paths.includes(routePath));
+  assert(paths.includes("/:id/commit/:commitId/diff"));
   assert(paths.indexOf("/preview/:id/*") < paths.indexOf("/:id"));
   assert(paths.indexOf("/file/:id/*") < paths.indexOf("/:id"));
+  assert(paths.indexOf("/:id/commit/:commitId/diff") < paths.indexOf("/:id"));
   assert.equal(paths.filter((routePath) => routePath === "/:id").length, 1);
 });
 

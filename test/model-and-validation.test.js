@@ -30,6 +30,7 @@ test("repository schema accepts branch-aware commit metadata", () => {
       message: "Initial commit",
       files: [{ filename: "app.js", path: "src/app.js", hash, status: "added" }],
       deletedFiles: [],
+      summary: { filesChanged: 1, additions: 4, deletions: 0 },
       time: new Date(),
     }],
   });

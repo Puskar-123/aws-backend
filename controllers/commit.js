@@ -37,9 +37,16 @@ async function commitRepo(repoId, message, metadata = {}) {
   await copyRecursive(stagedPath, commitDir);
 
   const hash = /^[a-f0-9]{64}$/.test(metadata.hash || "") ? metadata.hash : storageId;
+  if (!repo.branches?.length) {
+    repo.branches = [{ name: "main", head: null, isDefault: true }];
+  }
+  const existingBranch = repo.branches.find((item) => item.name === branch);
+  const inferredParent = existingBranch?.head ? safeString(existingBranch.head, "", 128) : "";
   const parents = Array.isArray(metadata.parents)
     ? metadata.parents.map((parent) => safeString(parent, "", 128)).filter(Boolean).slice(0, 2)
-    : (metadata.parent ? [safeString(metadata.parent, "", 128)] : []);
+    : (metadata.parent
+      ? [safeString(metadata.parent, "", 128)]
+      : (inferredParent ? [inferredParent] : []));
   const time = metadata.time && !Number.isNaN(Date.parse(metadata.time))
     ? new Date(metadata.time)
     : new Date();
@@ -72,6 +79,14 @@ async function commitRepo(repoId, message, metadata = {}) {
   const deletedFiles = Array.isArray(metadata.deletedFiles)
     ? metadata.deletedFiles.map((file) => normalizeRepositoryPath(safeString(file, "", 1000)))
     : [];
+  const requestedSummary = metadata.summary || {};
+  const summary = ["filesChanged", "additions", "deletions"].every((key) =>
+    Number.isInteger(requestedSummary[key]) && requestedSummary[key] >= 0
+  ) ? {
+    filesChanged: requestedSummary.filesChanged,
+    additions: requestedSummary.additions,
+    deletions: requestedSummary.deletions,
+  } : undefined;
 
   repo.commits.push({
     hash,
@@ -83,12 +98,10 @@ async function commitRepo(repoId, message, metadata = {}) {
     message,
     files: changedFiles,
     deletedFiles,
+    summary,
     time,
   });
 
-  if (!repo.branches?.length) {
-    repo.branches = [{ name: "main", head: null, isDefault: true }];
-  }
   let branchRef = repo.branches.find((item) => item.name === branch);
   if (!branchRef) {
     repo.branches.push({ name: branch, head: hash, isDefault: false });

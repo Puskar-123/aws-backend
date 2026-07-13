@@ -95,7 +95,7 @@ async function pushRepo(req, res) {
       repo.branches.push({ name: branchName, head: null, isDefault: false });
       branch = repo.branches.find((item) => item.name === branchName);
     }
-    const targetCommit = req.body?.head ? findCommit(repo, req.body.head) : null;
+    let targetCommit = req.body?.head ? findCommit(repo, req.body.head) : null;
     let latestCommit;
     if (targetCommit?.storageId) {
       latestCommit = {
@@ -111,6 +111,9 @@ async function pushRepo(req, res) {
     if (!latestCommit) latestCommit = await findLatestCommit(commitsPath);
     if (!latestCommit) {
       return res.status(400).json({ error: "No commits to push" });
+    }
+    if (!targetCommit) {
+      targetCommit = repo.commits.find((commit) => commit.storageId === latestCommit.id) || null;
     }
 
     // Each commit directory is a full snapshot. Only the newest one is needed

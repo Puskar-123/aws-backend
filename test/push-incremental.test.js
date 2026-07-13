@@ -72,9 +72,11 @@ test("push uploads the first snapshot, skips an immediate repeat, then uploads e
   };
   await writeCommit(root, "storage-1", { "src/App.jsx": "one", "README.md": "readme" });
 
-  let result = await runPush(["src/App.jsx", "README.md"], "main", firstHash);
+  // Browser pushes do not send an explicit head; the commit is resolved by storageId.
+  let result = await runPush(["src/App.jsx", "README.md"], "main");
   assert.equal(result.uploadedCount, 2);
   assert.equal(result.skippedCount, 0);
+  assert.equal(repository.commits[0].snapshot.length, 2);
 
   uploads.length = 0;
   result = await runPush(["src/App.jsx", "README.md"], "main", firstHash);

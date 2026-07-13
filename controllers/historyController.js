@@ -17,6 +17,7 @@ function normalizeCommit(commit, repository, index) {
     message: value.message || "No message",
     files: value.files || [],
     deletedFiles: value.deletedFiles || [],
+    summary: value.summary || null,
     time: value.time || null,
   };
 }
