@@ -3,6 +3,26 @@ const path = require("path");
 const { s3, S3_BUCKET } = require("../config/aws-config");
 const Repository = require("../models/repoModel");
 
+async function getAllFiles(dir) {
+  const entries = await fs.readdir(dir, {
+    withFileTypes: true,
+  });
+
+  let files = [];
+
+  for (const entry of entries) {
+    const full = path.join(dir, entry.name);
+
+    if (entry.isDirectory()) {
+      files.push(...await getAllFiles(full));
+    } else {
+      files.push(full);
+    }
+  }
+
+  return files;
+}
+
 async function pushRepo(req, res) {
   const { id } = req.params;
 
@@ -26,7 +46,7 @@ async function pushRepo(req, res) {
     for (const commitDir of commitDirs) {
 
       const commitPath = path.join(commitsPath, commitDir);
-      const files = await fs.readdir(commitPath);
+      const files = await getAllFiles(commitPath);
 
       let commitMessage = "";
       let commitTime = new Date();
@@ -34,11 +54,15 @@ async function pushRepo(req, res) {
       const commitFiles = [];
 
       for (const file of files) {
+        const relativePath = path
+          .relative(commitPath, file)
+          .split(path.sep)
+          .join("/");
+        const filename = path.basename(file);
 
-        const filePath = path.join(commitPath, file);
-        const fileContent = await fs.readFile(filePath);
+        const fileContent = await fs.readFile(file);
 
-        const key = `repos/${id}/commits/${commitDir}/${file}`;
+        const key = `repos/${id}/commits/${commitDir}/${relativePath}`;
 
         // Upload every file to S3
         await s3.upload({
@@ -48,7 +72,7 @@ async function pushRepo(req, res) {
         }).promise();
 
         // Read commit.json
-        if (file === "commit.json") {
+        if (filename === "commit.json") {
 
           try {
 
@@ -73,14 +97,15 @@ async function pushRepo(req, res) {
         }
 
         const fileData = {
-          filename: file,
-          path: key,
+          filename,
+          path: relativePath,
+          s3Key: key,
         };
 
         commitFiles.push(fileData);
 
         // Latest version of every file
-        latestFiles.set(file, fileData);
+        latestFiles.set(relativePath, fileData);
       }
 
       commitHistory.push({

@@ -24,6 +24,9 @@ const RepositorySchema = new Schema(
         type: String,
         required: true,
       },
+      s3Key: {
+        type: String,
+      },
     },
   ],
 
@@ -38,6 +41,7 @@ const RepositorySchema = new Schema(
         {
           filename: String,
           path: String,
+          s3Key: String,
         },
       ],
 

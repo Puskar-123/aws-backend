@@ -4,6 +4,25 @@ const { v4: uuidv4 } = require("uuid");
 const mongoose = require("mongoose");
 const Repository = require("../models/repoModel");
 
+async function copyRecursive(src, dest) {
+  const stat = await fs.stat(src);
+
+  if (stat.isDirectory()) {
+    await fs.mkdir(dest, { recursive: true });
+
+    const items = await fs.readdir(src);
+
+    for (const item of items) {
+      await copyRecursive(
+        path.join(src, item),
+        path.join(dest, item)
+      );
+    }
+  } else {
+    await fs.copyFile(src, dest);
+  }
+}
+
 async function commitRepo(repoId, message) {
   if (!mongoose.Types.ObjectId.isValid(repoId)) {
     throw new Error("Invalid repository ID");
@@ -24,13 +43,7 @@ async function commitRepo(repoId, message) {
     const commitDir = path.join(commitPath, commitID);
     await fs.mkdir(commitDir, { recursive: true });
 
-    const files = await fs.readdir(stagedPath);
-    for (const file of files) {
-      await fs.copyFile(
-        path.join(stagedPath, file),
-        path.join(commitDir, file)
-      );
-    }
+    await copyRecursive(stagedPath, commitDir);
 
     await fs.writeFile(
     path.join(commitDir, "commit.json"),

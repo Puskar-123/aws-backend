@@ -58,7 +58,8 @@ async function pullRepo(req, res) {
       if (filename !== "commit.json") {
         latestFiles.set(filename, {
           filename,
-          path: key,
+          path: filename,
+          s3Key: key,
         });
       }
     }

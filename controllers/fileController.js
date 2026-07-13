@@ -33,7 +33,7 @@ async function getFile(req, res) {
 
     // Find file
     const file = repo.content.find(
-      (f) => f.filename === filename
+      (f) => f.path === filename
     );
 
     console.log("File object:", file);
@@ -45,13 +45,15 @@ async function getFile(req, res) {
     }
 
     console.log("S3 Bucket:", S3_BUCKET);
-    console.log("S3 Key:", file.path);
+    const s3Key = file.s3Key || file.path;
+
+    console.log("S3 Key:", s3Key);
 
     try {
       const data = await s3
         .getObject({
           Bucket: S3_BUCKET,
-          Key: file.path,
+          Key: s3Key,
         })
         .promise();
 

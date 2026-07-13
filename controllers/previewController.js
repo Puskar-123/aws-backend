@@ -14,7 +14,7 @@ async function previewFile(req, res) {
     }
 
     const file = repo.content.find(
-      (f) => f.filename === filename
+      (f) => f.path === filename
     );
 
     if (!file) {
@@ -23,9 +23,11 @@ async function previewFile(req, res) {
       });
     }
 
+    const s3Key = file.s3Key || file.path;
+
     const data = await s3.getObject({
       Bucket: S3_BUCKET,
-      Key: file.path,
+      Key: s3Key,
     }).promise();
 
     res.json({
