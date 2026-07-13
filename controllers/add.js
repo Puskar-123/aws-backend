@@ -1,5 +1,6 @@
 const fs = require("fs").promises;
 const path = require("path");
+const { normalizeRepositoryPath } = require("../utils/paths");
 
 async function addRepo(
   repoId,
@@ -19,8 +20,7 @@ async function addRepo(
   );
 
   try {
-    const finalPath =
-      relativePath || originalFileName;
+    const finalPath = normalizeRepositoryPath(relativePath || originalFileName);
 
     const destination = path.join(
       stagingPath,

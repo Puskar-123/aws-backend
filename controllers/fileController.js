@@ -1,94 +1,38 @@
+const path = require("path");
 const { s3, S3_BUCKET } = require("../config/aws-config");
-const Repository = require("../models/repoModel");
+const { getAccessibleRepository, sendAccessError } = require("../utils/repositoryAccess");
+const { findRepositoryFile, requestedRepoPath } = require("../utils/repoPath");
+
+function safeDownloadName(filePath) {
+  return path.posix.basename(filePath).replace(/["\r\n]/g, "_");
+}
 
 async function getFile(req, res) {
+  let requestedPath;
   try {
-    const { id, filename } = req.params;
+    requestedPath = requestedRepoPath(req);
+    const repo = await getAccessibleRepository(req, req.params.id);
+    const file = findRepositoryFile(repo, requestedPath);
+    if (!file) return res.status(404).json({ error: "File not found" });
 
-    console.log("=================================");
-    console.log("Repo ID:", id);
-    console.log("Filename:", filename);
-    console.log("Mongo URI:", process.env.MONGODB_URI);
-    console.log("=================================");
-
-    // Show all repositories
-    const allRepos = await Repository.find();
-
-    console.log("Total repos:", allRepos.length);
-    console.log(
-      "Repo IDs:",
-      allRepos.map((r) => r._id.toString())
-    );
-
-    // Find repository
-    const repo = await Repository.findById(id);
-
-    console.log("Repository:", repo);
-
-    if (!repo) {
-      return res.status(404).json({
-        error: "Repository not found",
-      });
-    }
-
-    // Find file
-    const file = repo.content.find(
-      (f) => f.path === filename
-    );
-
-    console.log("File object:", file);
-
-    if (!file) {
-      return res.status(404).json({
-        error: "File not found",
-      });
-    }
-
-    console.log("S3 Bucket:", S3_BUCKET);
-    const s3Key = file.s3Key || file.path;
-
-    console.log("S3 Key:", s3Key);
-
+    const s3Key = file.s3Key || file.storageKey || file.path;
+    let data;
     try {
-      const data = await s3
-        .getObject({
-          Bucket: S3_BUCKET,
-          Key: s3Key,
-        })
-        .promise();
-
-      console.log("S3 download successful!");
-
-      res.setHeader(
-        "Content-Disposition",
-        `attachment; filename="${filename}"`
-      );
-
-      return res.send(data.Body);
-
-    } catch (err) {
-      console.error("========== S3 ERROR ==========");
-      console.error(err);
-      console.error("==============================");
-
-      return res.status(500).json({
-        error: "Unable to download file from S3",
-        details: err.message,
-      });
+      data = await s3.getObject({ Bucket: S3_BUCKET, Key: s3Key }).promise();
+    } catch (error) {
+      console.error(`S3 download failed for repository ${req.params.id}, path ${requestedPath}:`, error.code || error.message);
+      return res.status(500).json({ error: "Unable to download file from storage" });
     }
 
-  } catch (err) {
-    console.error("========== SERVER ERROR ==========");
-    console.error(err);
-    console.error("==================================");
-
-    return res.status(500).json({
-      error: "Internal Server Error",
-      details: err.message,
-    });
+    const filename = safeDownloadName(requestedPath);
+    res.setHeader("Content-Type", data.ContentType || file.contentType || "application/octet-stream");
+    res.setHeader("Content-Disposition", `attachment; filename="${filename}"; filename*=UTF-8''${encodeURIComponent(filename)}`);
+    return res.send(data.Body);
+  } catch (error) {
+    if (error.status) return sendAccessError(res, error);
+    console.error(`Download failed for repository ${req.params.id}, path ${requestedPath || "unknown"}:`, error.message);
+    return res.status(500).json({ error: "Unable to download file" });
   }
 }
 
-module.exports = {
-  getFile,
-};
+module.exports = { getFile, safeDownloadName };

@@ -4,7 +4,8 @@
   "description": "Git Clone",
   "main": "index.js",
   "scripts": {
-    "start": "node index.js start"
+    "start": "node index.js start",
+    "test": "node --test"
   },
   "keywords": [],
   "author": "Honey",

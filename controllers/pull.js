@@ -2,87 +2,36 @@ const fs = require("fs").promises;
 const path = require("path");
 const { s3, S3_BUCKET } = require("../config/aws-config");
 const Repository = require("../models/repoModel");
+const { normalizeRepositoryPath } = require("../utils/paths");
 
 async function pullRepo(req, res) {
   const { id } = req.params;
-
   try {
-    // Find repository
-    const repo = await Repository.findById(id);
+    const repo = req.repository || await Repository.findById(id);
+    if (!repo) return res.status(404).json({ error: "Repository not found" });
 
-    if (!repo) {
-      return res.status(404).json({
-        error: "Repository not found",
-      });
-    }
-
-    // Local .myGit folder
-    const repoPath = path.resolve(process.cwd(), ".myGit", id);
-
-    // Get all objects from S3
-    const data = await s3
-      .listObjectsV2({
-        Bucket: S3_BUCKET,
-        Prefix: `repos/${id}/commits/`,
-      })
-      .promise();
-
-    const latestFiles = new Map();
-
-    // Download every object
-    for (const object of data.Contents) {
-      const key = object.Key;
-
-      const relativeKey = key.replace(`repos/${id}/`, "");
-      const destination = path.join(repoPath, relativeKey);
-
-      // Create folder if it doesn't exist
-      await fs.mkdir(path.dirname(destination), {
-        recursive: true,
-      });
-
-      // Download file
-      const file = await s3
-        .getObject({
-          Bucket: S3_BUCKET,
-          Key: key,
-        })
-        .promise();
-
-      // Save locally
-      await fs.writeFile(destination, file.Body);
-
-      // Save latest file list (ignore commit.json)
-      const filename = path.basename(key);
-
-      if (filename !== "commit.json") {
-        latestFiles.set(filename, {
-          filename,
-          path: filename,
-          s3Key: key,
-        });
+    // Materialize only the current MongoDB snapshot. Listing every historical
+    // S3 object can select stale versions and must not erase stored hashes.
+    const destinationRoot = path.resolve(process.cwd(), ".myGit", id, "pulled");
+    for (const file of repo.content) {
+      const relativePath = normalizeRepositoryPath(file.path || file.filename);
+      const destination = path.resolve(destinationRoot, ...relativePath.split("/"));
+      if (!destination.startsWith(`${destinationRoot}${path.sep}`)) {
+        return res.status(400).json({ error: `Unsafe repository file path: ${relativePath}` });
       }
+      const object = await s3.getObject({
+        Bucket: S3_BUCKET,
+        Key: file.s3Key || file.path,
+      }).promise();
+      await fs.mkdir(path.dirname(destination), { recursive: true });
+      await fs.writeFile(destination, object.Body);
     }
 
-    // Update MongoDB repository content
-    repo.content = [...latestFiles.values()];
-
-    await repo.save();
-
-    return res.json({
-      message: "Pull successful!",
-      files: repo.content,
-    });
-
+    return res.json({ message: "Pull successful!", files: repo.content });
   } catch (err) {
-    console.error(err);
-
-    return res.status(500).json({
-      error: "Pull failed",
-    });
+    console.error("Pull failed:", err);
+    return res.status(err.status || 500).json({ error: err.status ? err.message : "Pull failed" });
   }
 }
 
-module.exports = {
-  pullRepo,
-};
+module.exports = { pullRepo };

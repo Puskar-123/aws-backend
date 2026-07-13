@@ -1,144 +1,248 @@
-const fs = require("fs").promises;
+const fs = require("fs");
+const fsp = fs.promises;
 const path = require("path");
+const mongoose = require("mongoose");
 const { s3, S3_BUCKET } = require("../config/aws-config");
 const Repository = require("../models/repoModel");
+const { calculateHash } = require("../utils/hash");
+const { ensureDefaultBranch, validateBranchName } = require("../utils/branches");
+const { isDefaultIgnoredRepoPath, isSensitiveRepoPath, normalizeRepoPath } = require("../utils/repoPath");
+
+const COMMIT_METADATA = "commit.json";
 
 async function getAllFiles(dir) {
-  const entries = await fs.readdir(dir, {
-    withFileTypes: true,
-  });
-
-  let files = [];
+  const entries = await fsp.readdir(dir, { withFileTypes: true });
+  const files = [];
 
   for (const entry of entries) {
-    const full = path.join(dir, entry.name);
-
+    const fullPath = path.join(dir, entry.name);
     if (entry.isDirectory()) {
-      files.push(...await getAllFiles(full));
-    } else {
-      files.push(full);
+      files.push(...await getAllFiles(fullPath));
+    } else if (entry.isFile() && entry.name !== COMMIT_METADATA) {
+      files.push(fullPath);
     }
   }
 
   return files;
 }
 
+async function getCommitTimestamp(commitPath) {
+  try {
+    const metadata = JSON.parse(
+      await fsp.readFile(path.join(commitPath, COMMIT_METADATA), "utf8")
+    );
+    const timestamp = Date.parse(metadata.time);
+    if (!Number.isNaN(timestamp)) return timestamp;
+  } catch (error) {
+    if (error.code !== "ENOENT" && !(error instanceof SyntaxError)) throw error;
+  }
+
+  return (await fsp.stat(commitPath)).mtimeMs;
+}
+
+async function findLatestCommit(commitsPath) {
+  const entries = await fsp.readdir(commitsPath, { withFileTypes: true });
+  const commits = await Promise.all(
+    entries
+      .filter((entry) => entry.isDirectory())
+      .map(async (entry) => ({
+        id: entry.name,
+        path: path.join(commitsPath, entry.name),
+        timestamp: await getCommitTimestamp(path.join(commitsPath, entry.name)),
+      }))
+  );
+
+  commits.sort((left, right) =>
+    right.timestamp - left.timestamp || right.id.localeCompare(left.id)
+  );
+  return commits[0] || null;
+}
+
+function findCommit(repository, hash) {
+  return repository.commits.find((commit) => commit.hash === hash || String(commit._id) === hash);
+}
+
+function findStoredSnapshot(repository, commit, useRepositoryContent) {
+  const visited = new Set();
+  let current = commit;
+  while (current && !visited.has(String(current._id))) {
+    visited.add(String(current._id));
+    const files = (current.snapshot?.length ? current.snapshot : current.files || [])
+      .filter((file) => (file.s3Key || file.storageKey) && file.status !== "deleted");
+    if (files.length) return files;
+    current = findCommit(repository, current.parent || current.parents?.[0]);
+  }
+  return useRepositoryContent ? repository.content : [];
+}
+
 async function pushRepo(req, res) {
   const { id } = req.params;
-
-  const repoPath = path.resolve(process.cwd(), ".myGit", id);
-  const commitsPath = path.join(repoPath, "commits");
+  const commitsPath = path.resolve(process.cwd(), ".myGit", id, "commits");
 
   try {
+    if (!mongoose.Types.ObjectId.isValid(id)) {
+      return res.status(400).json({ error: "Invalid repository ID" });
+    }
     const repo = await Repository.findById(id);
-
     if (!repo) {
-      return res.status(404).json({
-        error: "Repository not found",
-      });
+      return res.status(404).json({ error: "Repository not found" });
     }
 
-    const commitDirs = await fs.readdir(commitsPath);
+    const defaultBranch = ensureDefaultBranch(repo);
+    const branchName = validateBranchName(req.body?.branch || defaultBranch.name);
+    let branch = repo.branches.find((item) => item.name === branchName);
+    if (!branch) {
+      repo.branches.push({ name: branchName, head: null, isDefault: false });
+      branch = repo.branches.find((item) => item.name === branchName);
+    }
+    const targetCommit = req.body?.head ? findCommit(repo, req.body.head) : null;
+    let latestCommit;
+    if (targetCommit?.storageId) {
+      latestCommit = {
+        id: targetCommit.storageId,
+        path: path.join(commitsPath, targetCommit.storageId),
+      };
+      try {
+        await fsp.access(latestCommit.path);
+      } catch {
+        latestCommit = null;
+      }
+    }
+    if (!latestCommit) latestCommit = await findLatestCommit(commitsPath);
+    if (!latestCommit) {
+      return res.status(400).json({ error: "No commits to push" });
+    }
 
+    // Each commit directory is a full snapshot. Only the newest one is needed
+    // to calculate the repository's current remote state.
+    const committedFiles = (await getAllFiles(latestCommit.path)).sort();
+    const pushedPaths = Array.isArray(req.body?.paths)
+      ? new Set(req.body.paths.map((filePath) =>
+        normalizeRepoPath(String(filePath))
+      ))
+      : null;
+    const previousSnapshot = findStoredSnapshot(
+      repo,
+      targetCommit,
+      branchName === defaultBranch.name
+    );
+    const storedFiles = new Map(previousSnapshot.map((file) => [file.path, file]));
     const latestFiles = new Map();
-    const commitHistory = [];
+    const uploaded = [];
+    const skipped = [];
+    const warnings = [];
 
-    for (const commitDir of commitDirs) {
+    for (const filePath of committedFiles) {
+      const relativePath = normalizeRepoPath(path
+        .relative(latestCommit.path, filePath)
+        .split(path.sep)
+        .join("/"));
+      if (isDefaultIgnoredRepoPath(relativePath)) {
+        warnings.push(isSensitiveRepoPath(relativePath)
+          ? `Blocked protected file ${relativePath}; remove previously uploaded secrets manually.`
+          : `Ignored generated path ${relativePath}.`);
+        continue;
+      }
+      if (pushedPaths && !pushedPaths.has(relativePath)) continue;
+      const filename = path.basename(filePath);
 
-      const commitPath = path.join(commitsPath, commitDir);
-      const files = await getAllFiles(commitPath);
+      // Hash once and reuse the digest for comparison and persistence.
+      const hash = await calculateHash(filePath);
+      const storedFile = storedFiles.get(relativePath);
+      const storedKey = storedFile?.s3Key || storedFile?.storageKey;
+      const unchanged = Boolean(
+        storedFile && storedFile.hash === hash && storedKey
+      );
 
-      let commitMessage = "";
-      let commitTime = new Date();
-
-      const commitFiles = [];
-
-      for (const file of files) {
-        const relativePath = path
-          .relative(commitPath, file)
-          .split(path.sep)
-          .join("/");
-        const filename = path.basename(file);
-
-        const fileContent = await fs.readFile(file);
-
-        const key = `repos/${id}/commits/${commitDir}/${relativePath}`;
-
-        // Upload every file to S3
+      let s3Key;
+      if (unchanged) {
+        s3Key = storedKey;
+        skipped.push(relativePath);
+      } else {
+        s3Key = `repos/${id}/commits/${latestCommit.id}/${relativePath}`;
         await s3.upload({
           Bucket: S3_BUCKET,
-          Key: key,
-          Body: fileContent,
+          Key: s3Key,
+          Body: fs.createReadStream(filePath),
         }).promise();
-
-        // Read commit.json
-        if (filename === "commit.json") {
-
-          try {
-
-            const commitInfo = JSON.parse(
-              fileContent.toString()
-            );
-
-            commitMessage = commitInfo.message || "No Message";
-            commitTime = commitInfo.time || new Date();
-
-          } catch (err) {
-
-            console.error("Invalid commit.json", err);
-
-            commitMessage = "Unknown Commit";
-            commitTime = new Date();
-
-          }
-
-          // Do NOT show commit.json
-          continue;
-        }
-
-        const fileData = {
-          filename,
-          path: relativePath,
-          s3Key: key,
-        };
-
-        commitFiles.push(fileData);
-
-        // Latest version of every file
-        latestFiles.set(relativePath, fileData);
+        uploaded.push(relativePath);
       }
 
-      commitHistory.push({
-        message: commitMessage,
-        files: commitFiles,
-        time: commitTime,
+      latestFiles.set(relativePath, {
+        filename,
+        path: relativePath,
+        hash,
+        s3Key,
+        status: !storedFile ? "added" : (storedFile.hash !== hash ? "modified" : undefined),
       });
     }
 
-    // Latest repository files
-    repo.content = [...latestFiles.values()];
+    // Never upload protected files, and do not silently delete legacy remote
+    // secrets. They stay hidden until the owner explicitly deletes them.
+    for (const file of previousSnapshot) {
+      if (isSensitiveRepoPath(file.path) && !latestFiles.has(file.path)) {
+        latestFiles.set(file.path, {
+          filename: file.filename,
+          path: file.path,
+          hash: file.hash,
+          s3Key: file.s3Key || file.storageKey || file.path,
+        });
+        warnings.push(`Protected remote file ${file.path} was preserved and must be removed manually.`);
+      }
+    }
 
-    // Complete commit history
-    repo.commits = commitHistory;
+    // Missing paths are deletions in the latest snapshot. Historical S3 data is
+    // retained, while the latest repository snapshot no longer includes them.
+    const deleted = previousSnapshot
+      .filter((file) => !latestFiles.has(file.path))
+      .map((file) => file.path);
 
+    if (targetCommit && !targetCommit.snapshot?.length) {
+      targetCommit.snapshot = [...latestFiles.values()].map((file) => ({
+        filename: file.filename,
+        path: file.path,
+        hash: file.hash,
+        s3Key: file.s3Key,
+      }));
+      targetCommit.files = [
+        ...[...latestFiles.values()].filter((file) => file.status),
+        ...deleted.map((filePath) => ({
+          filename: path.basename(filePath),
+          path: filePath,
+          status: "deleted",
+        })),
+      ];
+      targetCommit.deletedFiles = deleted;
+      if (!targetCommit.branch) targetCommit.branch = branchName;
+    }
+    if (req.body?.head) branch.head = req.body.head;
+    if (branchName === defaultBranch.name) repo.content = [...latestFiles.values()];
+    // Existing commit history must not be rebuilt or overwritten by push.
     await repo.save();
 
     return res.json({
-      message: "Push successful!",
+      message: "Upload complete",
       files: repo.content,
       commits: repo.commits,
+      uploaded,
+      skipped,
+      deleted,
+      uploadedCount: uploaded.length,
+      skippedCount: skipped.length,
+      deletedCount: deleted.length,
+      warnings: [...new Set(warnings)],
     });
-
   } catch (err) {
-
-    console.error(err);
-
-    return res.status(500).json({
-      error: "Push failed",
+    console.error("Push failed:", err);
+    return res.status(err.status || 500).json({
+      error: err.status ? err.message : "Push failed",
+      details: process.env.NODE_ENV === "development" ? err.message : undefined,
     });
   }
 }
 
 module.exports = {
   pushRepo,
+  getAllFiles,
+  findLatestCommit,
 };

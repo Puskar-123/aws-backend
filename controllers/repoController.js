@@ -1,6 +1,7 @@
 const mongoose = require("mongoose");
 const Repository = require("../models/repoModel");
 const { s3, S3_BUCKET } = require("../config/aws-config");
+const { isSensitiveRepoPath } = require("../utils/repoPath");
 
 // ✅ CREATE REPOSITORY
 async function createRepository(req, res) {
@@ -49,6 +50,7 @@ async function createRepository(req, res) {
       owner,
       content: content || [],
       issues: issues || [],
+      branches: [{ name: "main", head: null, isDefault: true }],
     });
 
     await newRepository.save();
@@ -149,7 +151,17 @@ async function fetchRepositoryById(req, res) {
       return res.status(404).json({ error: "Repository not found!" });
     }
 
-    res.json(repository);
+    const response = repository.toObject();
+    const protectedFiles = response.content.filter((file) => {
+      try { return isSensitiveRepoPath(file.path || file.filename); } catch { return false; }
+    });
+    response.content = response.content.filter((file) => !protectedFiles.includes(file));
+    if (protectedFiles.length) {
+      response.warnings = [
+        `${protectedFiles.length} protected file(s) are hidden. Previously uploaded secrets must be removed manually.`,
+      ];
+    }
+    res.json(response);
 
   } catch (err) {
     console.error("FULL ERROR:", err);

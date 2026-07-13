@@ -11,17 +11,18 @@ async function createCommit(req, res) {
       });
     }
 
-    await commitRepo(id, message);
+    const commit = await commitRepo(id, message, req.body);
 
     res.status(200).json({
       message: "Commit created successfully!",
+      commit,
     });
   } catch (err) {
     console.error(err);
-
-    res.status(500).json({
-      error: "Commit failed",
-    });
+    const status = err.message === "Invalid repository ID"
+      ? 400
+      : (err.message === "Repository not found" ? 404 : (err.status || 500));
+    res.status(status).json({ error: status === 500 ? "Commit failed" : err.message });
   }
 }
 

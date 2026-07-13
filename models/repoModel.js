@@ -27,6 +27,12 @@ const RepositorySchema = new Schema(
       s3Key: {
         type: String,
       },
+      storageKey: {
+        type: String,
+      },
+      hash: {
+        type: String,
+      },
     },
   ],
 
@@ -42,11 +48,52 @@ const RepositorySchema = new Schema(
           filename: String,
           path: String,
           s3Key: String,
+          storageKey: String,
+          hash: String,
+          status: String,
         },
       ],
 
+      snapshot: [
+        {
+          filename: String,
+          path: String,
+          s3Key: String,
+          storageKey: String,
+          hash: String,
+        },
+      ],
+
+      hash: String,
+      parent: String,
+      parents: [String],
+      branch: String,
+      storageId: String,
+      author: {
+        name: String,
+        email: String,
+      },
+      deletedFiles: [String],
+
       time: {
         type: Date,
+      },
+    },
+  ],
+
+  branches: [
+    {
+      name: {
+        type: String,
+        required: true,
+      },
+      head: {
+        type: String,
+        default: null,
+      },
+      isDefault: {
+        type: Boolean,
+        default: false,
       },
     },
   ],
