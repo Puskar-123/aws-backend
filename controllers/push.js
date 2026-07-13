@@ -6,7 +6,7 @@ const Repository = require("../models/repoModel");
 async function pushRepo(req, res) {
   const { id } = req.params;
 
-  const repoPath = path.resolve(process.cwd(), ".myGit");
+  const repoPath = path.resolve(process.cwd(), ".myGit", id);
   const commitsPath = path.join(repoPath, "commits");
 
   try {
@@ -38,7 +38,7 @@ async function pushRepo(req, res) {
         const filePath = path.join(commitPath, file);
         const fileContent = await fs.readFile(filePath);
 
-        const key = `commits/${commitDir}/${file}`;
+        const key = `repos/${id}/commits/${commitDir}/${file}`;
 
         // Upload every file to S3
         await s3.upload({

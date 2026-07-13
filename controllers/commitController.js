@@ -2,6 +2,7 @@ const { commitRepo } = require("./commit");
 
 async function createCommit(req, res) {
   try {
+    const { id } = req.params;
     const { message } = req.body;
 
     if (!message) {
@@ -10,7 +11,7 @@ async function createCommit(req, res) {
       });
     }
 
-    await commitRepo(message);
+    await commitRepo(id, message);
 
     res.status(200).json({
       message: "Commit created successfully!",

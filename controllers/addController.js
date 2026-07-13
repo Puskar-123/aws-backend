@@ -4,6 +4,8 @@ const { addRepo } = require("./add");
 
 async function addFiles(req, res) {
   try {
+    const { id: repoId } = req.params;
+
     // No files uploaded
     if (!req.files || req.files.length === 0) {
       return res.status(400).json({
@@ -13,7 +15,7 @@ async function addFiles(req, res) {
 
     // Stage each uploaded file
     for (const file of req.files) {
-      await addRepo(file.path, file.originalname);
+      await addRepo(repoId, file.path, file.originalname);
     }
 
     // (Optional) Delete temporary uploaded files

@@ -1,9 +1,21 @@
 const fs = require("fs").promises;
 const path = require("path");
 const { v4: uuidv4 } = require("uuid");
+const mongoose = require("mongoose");
+const Repository = require("../models/repoModel");
 
-async function commitRepo(message) {
-  const repoPath = path.resolve(process.cwd(), ".myGit");
+async function commitRepo(repoId, message) {
+  if (!mongoose.Types.ObjectId.isValid(repoId)) {
+    throw new Error("Invalid repository ID");
+  }
+
+  const repo = await Repository.findById(repoId);
+
+  if (!repo) {
+    throw new Error("Repository not found");
+  }
+
+  const repoPath = path.resolve(process.cwd(), ".myGit", repoId);
   const stagedPath = path.join(repoPath, "staging");
   const commitPath = path.join(repoPath, "commits");
 
@@ -32,9 +44,17 @@ async function commitRepo(message) {
       )
     );
 
+    repo.commits.push({
+      message,
+      time: new Date(),
+    });
+
+    await repo.save();
+
     console.log(`Commit ${commitID} created with message: ${message}`);
   } catch (err) {
     console.error("Error committing files : ", err);
+    throw err;
   }
 }
 

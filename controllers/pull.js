@@ -17,13 +17,13 @@ async function pullRepo(req, res) {
     }
 
     // Local .myGit folder
-    const repoPath = path.resolve(process.cwd(), ".myGit");
+    const repoPath = path.resolve(process.cwd(), ".myGit", id);
 
     // Get all objects from S3
     const data = await s3
       .listObjectsV2({
         Bucket: S3_BUCKET,
-        Prefix: "commits/",
+        Prefix: `repos/${id}/commits/`,
       })
       .promise();
 
@@ -33,7 +33,8 @@ async function pullRepo(req, res) {
     for (const object of data.Contents) {
       const key = object.Key;
 
-      const destination = path.join(repoPath, key);
+      const relativeKey = key.replace(`repos/${id}/`, "");
+      const destination = path.join(repoPath, relativeKey);
 
       // Create folder if it doesn't exist
       await fs.mkdir(path.dirname(destination), {

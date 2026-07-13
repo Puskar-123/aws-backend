@@ -1,8 +1,8 @@
 const fs = require("fs").promises;
 const path = require("path");
 
-async function addRepo(tempFilePath, originalFileName) {
-  const repoPath = path.resolve(process.cwd(), ".myGit");
+async function addRepo(repoId, tempFilePath, originalFileName) {
+  const repoPath = path.resolve(process.cwd(), ".myGit", repoId);
   const stagingPath = path.join(repoPath, "staging");
 
   try {
