@@ -10,7 +10,7 @@ const { getFile } = require("../controllers/fileController");
 const { pullRepo } = require("../controllers/pull");
 const { getCommitHistory } = require("../controllers/historyController");
 const { previewFile } = require("../controllers/previewController");
-
+const {deleteFile,renameFile,} = require("../controllers/fileManageController");
 
 const upload = multer({
   dest: "uploads/",
@@ -33,5 +33,8 @@ repoRouter.post("/pull/:id", pullRepo);
 repoRouter.get("/:id", repoController.fetchRepositoryById);
 repoRouter.get("/history/:id", getCommitHistory);
 repoRouter.get("/preview/:id/:filename",previewFile);
+repoRouter.get("/file/:id/:filename", getFile);
+repoRouter.put("/file/:id/:filename", renameFile);
+repoRouter.delete("/file/:id/:filename", deleteFile);
 
 module.exports = repoRouter;
