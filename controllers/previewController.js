@@ -4,17 +4,23 @@ const { getAccessibleRepository, sendAccessError } = require("../utils/repositor
 const { findRepositoryFile, isSensitiveRepoPath, requestedRepoPath } = require("../utils/repoPath");
 
 const TEXT_EXTENSIONS = new Set([
-  ".js", ".jsx", ".ts", ".tsx", ".json", ".md", ".css", ".html",
-  ".txt", ".yml", ".yaml", ".xml", ".sh", ".py", ".java", ".c", ".cpp",
+  ".js", ".jsx", ".ts", ".tsx", ".json", ".md", ".mdx", ".css", ".scss",
+  ".html", ".txt", ".yml", ".yaml", ".xml", ".sh", ".py", ".java", ".c",
+  ".h", ".cpp", ".hpp", ".cs", ".go", ".rs", ".php", ".rb", ".sql",
+  ".env.example",
 ]);
 
 const CONTENT_TYPES = {
   ".js": "text/javascript", ".jsx": "text/javascript", ".ts": "text/typescript",
   ".tsx": "text/typescript", ".json": "application/json", ".md": "text/markdown",
-  ".css": "text/css", ".html": "text/html", ".txt": "text/plain",
+  ".mdx": "text/markdown", ".css": "text/css", ".scss": "text/x-scss",
+  ".html": "text/html", ".txt": "text/plain",
   ".yml": "application/yaml", ".yaml": "application/yaml", ".xml": "application/xml",
   ".sh": "text/x-shellscript", ".py": "text/x-python", ".java": "text/x-java-source",
-  ".c": "text/x-c", ".cpp": "text/x-c++",
+  ".c": "text/x-c", ".h": "text/x-c", ".cpp": "text/x-c++", ".hpp": "text/x-c++",
+  ".cs": "text/x-csharp", ".go": "text/x-go", ".rs": "text/x-rust",
+  ".php": "text/x-php", ".rb": "text/x-ruby", ".sql": "application/sql",
+  ".env.example": "text/plain",
 };
 
 function containsNullByte(buffer) {

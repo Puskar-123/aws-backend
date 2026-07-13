@@ -29,7 +29,7 @@ require.cache[awsModule] = {
   },
 };
 
-const { previewFile } = require("../controllers/previewController");
+const { previewFile, TEXT_EXTENSIONS } = require("../controllers/previewController");
 const { getFile } = require("../controllers/fileController");
 const { deleteFile, renameFile, destinationPath } = require("../controllers/fileManageController");
 const { findRepositoryFile, normalizeRepoPath, requestedRepoPath } = require("../utils/repoPath");
@@ -95,6 +95,14 @@ test("preview refuses protected environment files without reading S3", async () 
   await previewFile({ params: { id: "id", 0: "config/.env" }, headers: {} }, res);
   assert.equal(res.statusCode, 403);
   assert.equal(s3Calls.get.length, 0);
+});
+
+test("preview recognizes repository browser source formats", () => {
+  for (const extension of [
+    ".mdx", ".scss", ".h", ".hpp", ".cs", ".go", ".rs", ".php", ".rb", ".sql", ".env.example",
+  ]) {
+    assert.equal(TEXT_EXTENSIONS.has(extension), true, `${extension} should be previewable text`);
+  }
 });
 
 test("rename preserves a parent for basenames, moves S3 first, rejects ambiguity, and leaves history intact", async () => {
