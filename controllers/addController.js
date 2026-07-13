@@ -13,9 +13,20 @@ async function addFiles(req, res) {
       });
     }
 
-    // Stage each uploaded file
-    for (const file of req.files) {
-      await addRepo(repoId, file.path, file.originalname);
+    // Stage each uploaded file with its relative project path
+    const paths = req.body.paths;
+
+    for (let i = 0; i < req.files.length; i++) {
+      const relativePath = Array.isArray(paths)
+        ? paths[i]
+        : paths;
+
+      await addRepo(
+        repoId,
+        req.files[i].path,
+        req.files[i].originalname,
+        relativePath
+      );
     }
 
     // (Optional) Delete temporary uploaded files

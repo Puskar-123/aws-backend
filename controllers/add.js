@@ -1,27 +1,55 @@
 const fs = require("fs").promises;
 const path = require("path");
 
-async function addRepo(repoId, tempFilePath, originalFileName) {
-  const repoPath = path.resolve(process.cwd(), ".myGit", repoId);
-  const stagingPath = path.join(repoPath, "staging");
+async function addRepo(
+  repoId,
+  tempFilePath,
+  originalFileName,
+  relativePath
+) {
+  const repoPath = path.resolve(
+    process.cwd(),
+    ".myGit",
+    repoId
+  );
+
+  const stagingPath = path.join(
+    repoPath,
+    "staging"
+  );
 
   try {
-    // Create staging folder if it doesn't exist
-    await fs.mkdir(stagingPath, { recursive: true });
+    const finalPath =
+      relativePath || originalFileName;
 
-    // Copy uploaded file using its ORIGINAL filename
-    await fs.copyFile(
-      tempFilePath,
-      path.join(stagingPath, originalFileName)
+    const destination = path.join(
+      stagingPath,
+      finalPath
     );
 
-    console.log(`${originalFileName} added to staging area!`);
+    await fs.mkdir(
+      path.dirname(destination),
+      {
+        recursive: true
+      }
+    );
+
+    await fs.copyFile(
+      tempFilePath,
+      destination
+    );
+
+    console.log(
+      finalPath,
+      "added successfully."
+    );
   } catch (err) {
-    console.error("Error adding file:", err);
+    console.error(err);
+
     throw err;
   }
 }
 
 module.exports = {
-  addRepo,
+  addRepo
 };
