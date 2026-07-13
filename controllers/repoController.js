@@ -72,7 +72,9 @@ Created using CodeHub 🚀
 
   try {
 
-    console.log("Uploading README to S3...");
+    console.log("🚀 Uploading README to S3...");
+    console.log("Bucket:", S3_BUCKET);
+    console.log("Key:", readmeKey);
 
     const result = await s3.upload({
       Bucket: S3_BUCKET,
@@ -90,7 +92,7 @@ Created using CodeHub 🚀
     console.error(err);
 
     return res.status(500).json({
-      error: "Failed to upload README to S3",
+      error: err.message,
     });
 
   }
