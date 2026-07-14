@@ -21,13 +21,17 @@ function validateBranchName(name) {
 
 function ensureDefaultBranch(repository) {
   if (!repository.branches?.length) {
-    repository.branches = [{ name: "main", head: null, isDefault: true }];
+    const name = repository.defaultBranch || "main";
+    repository.branches = [{ name, head: null, isDefault: true }];
   }
-  let defaultBranch = repository.branches.find((branch) => branch.isDefault);
+  let defaultBranch = repository.branches.find((branch) =>
+    branch.name === repository.defaultBranch
+  ) || repository.branches.find((branch) => branch.isDefault);
   if (!defaultBranch) {
     defaultBranch = repository.branches[0];
-    defaultBranch.isDefault = true;
   }
+  repository.branches.forEach((branch) => { branch.isDefault = branch.name === defaultBranch.name; });
+  repository.defaultBranch = defaultBranch.name;
   return defaultBranch;
 }
 

@@ -88,7 +88,7 @@ const RepositorySchema = new Schema(
   ],
 
   branches: [
-    {
+    new Schema({
       name: {
         type: String,
         required: true,
@@ -101,8 +101,13 @@ const RepositorySchema = new Schema(
         type: Boolean,
         default: false,
       },
-    },
+    }, { _id: false, timestamps: true }),
   ],
+
+  defaultBranch: {
+    type: String,
+    default: "main",
+  },
 
   visibility: {
     type: String,

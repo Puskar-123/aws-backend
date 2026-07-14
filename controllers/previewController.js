@@ -2,6 +2,7 @@ const path = require("path");
 const { s3, S3_BUCKET } = require("../config/aws-config");
 const { getAccessibleRepository, sendAccessError } = require("../utils/repositoryAccess");
 const { findRepositoryFile, isSensitiveRepoPath, requestedRepoPath } = require("../utils/repoPath");
+const { getSnapshotDescriptor } = require("./snapshotController");
 
 const TEXT_EXTENSIONS = new Set([
   ".js", ".jsx", ".ts", ".tsx", ".json", ".md", ".mdx", ".css", ".scss",
@@ -38,7 +39,9 @@ async function previewFile(req, res) {
       });
     }
     const repo = await getAccessibleRepository(req, req.params.id);
-    const file = findRepositoryFile(repo, requestedPath);
+    const file = req.query?.branch
+      ? getSnapshotDescriptor(repo, req.query.branch).files.find((item) => item.path === requestedPath)
+      : findRepositoryFile(repo, requestedPath);
     if (!file) return res.status(404).json({ error: "File not found" });
 
     const s3Key = file.s3Key || file.storageKey || file.path;

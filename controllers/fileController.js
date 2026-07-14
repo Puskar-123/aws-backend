@@ -1,7 +1,8 @@
 const path = require("path");
 const { s3, S3_BUCKET } = require("../config/aws-config");
 const { getAccessibleRepository, sendAccessError } = require("../utils/repositoryAccess");
-const { findRepositoryFile, requestedRepoPath } = require("../utils/repoPath");
+const { findRepositoryFile, isSensitiveRepoPath, requestedRepoPath } = require("../utils/repoPath");
+const { getSnapshotDescriptor } = require("./snapshotController");
 
 function safeDownloadName(filePath) {
   return path.posix.basename(filePath).replace(/["\r\n]/g, "_");
@@ -11,8 +12,13 @@ async function getFile(req, res) {
   let requestedPath;
   try {
     requestedPath = requestedRepoPath(req);
+    if (isSensitiveRepoPath(requestedPath)) {
+      return res.status(403).json({ error: "Sensitive files cannot be downloaded" });
+    }
     const repo = await getAccessibleRepository(req, req.params.id);
-    const file = findRepositoryFile(repo, requestedPath);
+    const file = req.query?.branch
+      ? getSnapshotDescriptor(repo, req.query.branch).files.find((item) => item.path === requestedPath)
+      : findRepositoryFile(repo, requestedPath);
     if (!file) return res.status(404).json({ error: "File not found" });
 
     const s3Key = file.s3Key || file.storageKey || file.path;

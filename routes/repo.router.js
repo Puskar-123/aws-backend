@@ -28,6 +28,8 @@ repoRouter.post("/create", repoController.createRepository);
 // Branch, history, and clone/snapshot APIs. Keep these before /:id.
 repoRouter.get("/:id/branches", listBranches);
 repoRouter.post("/:id/branches", createBranch);
+repoRouter.get("/:id/branches/:branchName/snapshot", getSnapshot);
+repoRouter.get("/:id/branches/:branchName/history", getCommitHistory);
 repoRouter.delete("/:id/branches/:branchName", deleteBranch);
 repoRouter.get("/:id/history", getCommitHistory);
 repoRouter.get("/:id/history/:branchName", getCommitHistory);

@@ -38,6 +38,12 @@ function getParentCommitDescriptor(repository, descriptor) {
     return { descriptor: parent || null, missingParent: parent ? null : String(parentId) };
   }
 
+  const hasExplicitParentMetadata = Object.prototype.hasOwnProperty.call(descriptor.commit, "parent")
+    || Object.prototype.hasOwnProperty.call(descriptor.commit, "parents");
+  if (hasExplicitParentMetadata) {
+    return { descriptor: null, missingParent: null };
+  }
+
   // Legacy commits did not record parent hashes. MongoDB commit arrays are append-only,
   // so the immediately preceding entry is their safest compatible parent.
   return {
