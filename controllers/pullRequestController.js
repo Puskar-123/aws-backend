@@ -17,6 +17,7 @@ const {
   validPullNumber,
 } = require("../services/pullRequestService");
 const { validateBranchName } = require("../utils/branches");
+const { getAuthenticatedUserId, requireAuthenticatedUser } = require("../utils/authUser");
 
 const safeAuthorFields = "_id username name avatarUrl";
 
@@ -65,6 +66,7 @@ function createPullRequestController({
   async function create(req, res) {
     try {
       const repository = req.repository;
+      const authenticatedUser = await requireAuthenticatedUser(req, UserModel);
       const title = cleanText(req.body?.title, 200, "Title", true);
       const description = cleanText(req.body?.description, 10000, "Description");
       const baseBranch = validateBranchName(req.body?.baseBranch);
@@ -88,7 +90,7 @@ function createPullRequestController({
         number: counter.pullRequestCounter,
         title,
         description,
-        author: req.user.id,
+        author: authenticatedUser._id,
         baseBranch,
         compareBranch,
         baseHeadAtCreation: branchByName(repository, baseBranch)?.head || null,
@@ -98,6 +100,7 @@ function createPullRequestController({
         changedFilesSummary: storedComparison.summary,
         changedFilesSnapshot: storedComparison.files,
       });
+      if (pullRequest.populate) await pullRequest.populate("author", safeAuthorFields);
       return res.status(201).json({ message: "Pull request created successfully", pullRequest: pullObject(pullRequest) });
     } catch (error) { return sendError(res, error); }
   }
@@ -146,6 +149,7 @@ function createPullRequestController({
       const hasConflicts = Boolean(comparison?.summary?.hasConflicts);
       const currentCompareHead = branchByName(req.repository, pullRequest.compareBranch)?.head || null;
       const reviews = reviewSummary(pullRequest.reviews, currentCompareHead);
+      const authenticatedUserId = getAuthenticatedUserId(req);
       return res.json({
         pullRequest: pullObject(pullRequest),
         comparison,
@@ -157,11 +161,11 @@ function createPullRequestController({
           compare: String(branchByName(req.repository, pullRequest.compareBranch)?.head || "") !== String(pullRequest.compareHeadAtCreation || ""),
         },
         permissions: {
-          canEdit: canEditPullRequest(pullRequest, req.repository, req.user?.id),
-          canMerge: Boolean(req.user?.id) && idOf(req.repository.owner) === String(req.user.id),
-          canComment: Boolean(req.user?.id),
-          canReviewDecision: Boolean(req.user?.id) && idOf(req.repository.owner) === String(req.user.id),
-          isAuthor: Boolean(req.user?.id) && idOf(pullRequest.author) === String(req.user.id),
+          canEdit: canEditPullRequest(pullRequest, req.repository, authenticatedUserId),
+          canMerge: Boolean(authenticatedUserId) && idOf(req.repository.owner) === authenticatedUserId,
+          canComment: Boolean(authenticatedUserId),
+          canReviewDecision: Boolean(authenticatedUserId) && idOf(req.repository.owner) === authenticatedUserId,
+          isAuthor: Boolean(authenticatedUserId) && idOf(pullRequest.author) === authenticatedUserId,
         },
         mergeability: {
           canMerge: pullRequest.status === "open" && hasChanges && !hasConflicts && !reviews.blocking,
@@ -179,7 +183,8 @@ function createPullRequestController({
     try {
       const pullRequest = await findPull(req.repository._id, req.params.number, false);
       if (!pullRequest) throw httpError(404, "Pull request not found");
-      if (!canEditPullRequest(pullRequest, req.repository, req.user.id)) throw httpError(403, "You do not have permission to edit this pull request");
+      const authenticatedUserId = getAuthenticatedUserId(req);
+      if (!canEditPullRequest(pullRequest, req.repository, authenticatedUserId)) throw httpError(403, "You do not have permission to edit this pull request");
       if (Object.prototype.hasOwnProperty.call(req.body || {}, "title")) pullRequest.title = cleanText(req.body.title, 200, "Title", true);
       if (Object.prototype.hasOwnProperty.call(req.body || {}, "description")) pullRequest.description = cleanText(req.body.description, 10000, "Description");
       await pullRequest.save();
@@ -191,12 +196,14 @@ function createPullRequestController({
     try {
       const pullRequest = await findPull(req.repository._id, req.params.number, false);
       if (!pullRequest) throw httpError(404, "Pull request not found");
+      const authenticatedUser = await requireAuthenticatedUser(req, UserModel);
       const body = cleanText(req.body?.body, 5000, "Comment", true);
-      pullRequest.comments.push({ author: req.user.id, body });
+      const now = new Date();
+      pullRequest.comments.push({ author: authenticatedUser._id, body, createdAt: now, updatedAt: now });
       await pullRequest.save();
-      const created = pullRequest.comments.at(-1);
-      const author = await UserModel.findById(req.user.id).select(safeAuthorFields).lean();
-      return res.status(201).json({ message: "Comment added", comment: { ...created.toObject(), author } });
+      if (pullRequest.populate) await pullRequest.populate("comments.author", safeAuthorFields);
+      const created = pullObject(pullRequest).comments.at(-1);
+      return res.status(201).json({ message: "Comment added", comment: created });
     } catch (error) { return sendError(res, error); }
   }
 
@@ -204,7 +211,8 @@ function createPullRequestController({
     try {
       const pullRequest = await findPull(req.repository._id, req.params.number, false);
       if (!pullRequest) throw httpError(404, "Pull request not found");
-      if (!canEditPullRequest(pullRequest, req.repository, req.user.id)) throw httpError(403, "You do not have permission to update this pull request");
+      const authenticatedUserId = getAuthenticatedUserId(req);
+      if (!canEditPullRequest(pullRequest, req.repository, authenticatedUserId)) throw httpError(403, "You do not have permission to update this pull request");
       if (reopening) {
         if (pullRequest.status === "merged") throw httpError(409, "A merged pull request cannot be reopened");
         if (pullRequest.status !== "closed") throw httpError(409, "Only a closed pull request can be reopened");
@@ -227,6 +235,7 @@ function createPullRequestController({
     try {
       const pullRequest = await findPull(req.repository._id, req.params.number, false);
       if (!pullRequest) throw httpError(404, "Pull request not found");
+      const authenticatedUser = await requireAuthenticatedUser(req, UserModel);
       if (pullRequest.status !== "open") throw httpError(409, `Pull request is already ${pullRequest.status}`);
       const comparison = await compareLive(req.repository, pullRequest.baseBranch, pullRequest.compareBranch);
       if (!comparison.summary.filesChanged) throw httpError(409, "Pull request has no changes to merge");
@@ -237,11 +246,11 @@ function createPullRequestController({
       const reviews = reviewSummary(pullRequest.reviews, currentCompareHead);
       if (reviews.blocking) throw httpError(409, "Merge blocked by requested changes");
       const finalComparison = comparisonSnapshot(comparison);
-      const commit = createMergeCommit(req.repository, pullRequest, comparison, req.user.id);
+      const commit = createMergeCommit(req.repository, pullRequest, comparison, String(authenticatedUser._id));
       await req.repository.save();
       pullRequest.status = "merged";
       pullRequest.mergeCommit = commit.hash;
-      pullRequest.mergedBy = req.user.id;
+      pullRequest.mergedBy = authenticatedUser._id;
       pullRequest.mergedAt = commit.time;
       pullRequest.closedAt = null;
       pullRequest.finalBaseHead = finalComparison.baseHead;
@@ -251,6 +260,7 @@ function createPullRequestController({
       pullRequest.finalChangedFilesSummary = finalComparison.summary;
       pullRequest.finalChangedFilesSnapshot = finalComparison.files;
       await pullRequest.save();
+      if (pullRequest.populate) await pullRequest.populate("mergedBy", safeAuthorFields);
       return res.json({ message: "Pull request merged", pullRequest: pullObject(pullRequest), mergeCommit: commit.hash });
     } catch (error) { return sendError(res, error); }
   }
@@ -268,16 +278,18 @@ function createPullRequestController({
     try {
       const pullRequest = await findPull(req.repository._id, req.params.number, false);
       if (!pullRequest) throw httpError(404, "Pull request not found");
+      const authenticatedUser = await requireAuthenticatedUser(req, UserModel);
       if (pullRequest.status !== "open") throw httpError(409, "Only an open pull request can be reviewed");
       const decision = String(req.body?.decision || "");
       if (!["approved", "changes_requested", "commented"].includes(decision)) throw httpError(400, "Invalid review decision");
       const body = cleanText(req.body?.body, 5000, "Review");
       if (["changes_requested", "commented"].includes(decision) && !body) throw httpError(400, "Review body is required for this decision");
-      if (decision === "approved" && idOf(pullRequest.author) === String(req.user.id)) throw httpError(403, "You cannot approve your own pull request");
-      const isOwner = idOf(req.repository.owner) === String(req.user.id);
+      if (decision === "approved" && idOf(pullRequest.author) === String(authenticatedUser._id)) throw httpError(403, "You cannot approve your own pull request");
+      const isOwner = idOf(req.repository.owner) === String(authenticatedUser._id);
       if (["approved", "changes_requested"].includes(decision) && !isOwner) throw httpError(403, "Only the repository owner can submit this review decision");
       const commitHead = branchByName(req.repository, pullRequest.compareBranch)?.head || null;
-      pullRequest.reviews.push({ reviewer: req.user.id, decision, body, commitHead });
+      const now = new Date();
+      pullRequest.reviews.push({ reviewer: authenticatedUser._id, decision, body, commitHead, createdAt: now, updatedAt: now });
       await pullRequest.save();
       await pullRequest.populate("reviews.reviewer", safeAuthorFields);
       const created = pullRequest.reviews.at(-1);

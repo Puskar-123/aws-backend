@@ -16,6 +16,12 @@ async function connectClient() {
 }
 
 function getCollection() {
+  // Use the database selected by MONGODB_URI so Mongoose User references and
+  // authentication records live in the same database.
+  return client.db().collection("users");
+}
+
+function getLegacyCollection() {
   return client.db("githubclone").collection("users");
 }
 
@@ -77,7 +83,12 @@ async function login(req, res) {
     await connectClient();
     const users = getCollection();
 
-    const user = await users.findOne({ email });
+    let user = await users.findOne({ email });
+    let fromLegacyDatabase = false;
+    if (!user && users.namespace !== getLegacyCollection().namespace) {
+      user = await getLegacyCollection().findOne({ email });
+      fromLegacyDatabase = Boolean(user);
+    }
     if (!user) {
       return res.status(400).json({ message: "Invalid credentials" });
     }
@@ -85,6 +96,12 @@ async function login(req, res) {
     const isMatch = await bcrypt.compare(password, user.password);
     if (!isMatch) {
       return res.status(400).json({ message: "Invalid credentials" });
+    }
+
+    // A verified legacy login is sufficient proof to copy the same User _id
+    // into the primary database. PR documents are never rewritten here.
+    if (fromLegacyDatabase) {
+      await users.updateOne({ _id: user._id }, { $setOnInsert: user }, { upsert: true });
     }
 
     // ✅ FIXED
@@ -262,6 +279,7 @@ async function deleteUserProfile(req, res) {
 module.exports = {
   connectClient,
   getCollection,
+  getLegacyCollection,
   signup,
   login,
   getAllUsers,

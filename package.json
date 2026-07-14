@@ -5,7 +5,9 @@
   "main": "index.js",
   "scripts": {
     "start": "node index.js start",
-    "test": "node --test"
+    "test": "node --test",
+    "migrate:users": "node scripts/migrateUsersToPrimaryDatabase.js",
+    "audit:pr-users": "node scripts/auditPullRequestUserRefs.js"
   },
   "keywords": [],
   "author": "Honey",

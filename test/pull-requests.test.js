@@ -1,13 +1,32 @@
 const assert = require("node:assert/strict");
 const test = require("node:test");
 const mongoose = require("mongoose");
+const jwt = require("jsonwebtoken");
 const PullRequest = require("../models/pullRequestModel");
+const User = require("../models/userModel");
 const { createPullRequestController } = require("../controllers/pullRequestController");
 const { buildMergedSnapshot, createMergeCommit, reviewSummary } = require("../services/pullRequestService");
+const { getAuthenticatedUserId, requireAuthenticatedUser } = require("../utils/authUser");
+const { readAuthenticatedUser } = require("../middleware/authMiddleware");
 
 const repositoryId = new mongoose.Types.ObjectId();
 const ownerId = new mongoose.Types.ObjectId();
 const authorId = new mongoose.Types.ObjectId();
+const reviewerId = new mongoose.Types.ObjectId();
+
+function identity(id) {
+  const value = String(id);
+  if (value === String(ownerId)) return { _id: ownerId, username: "owner", name: "Repository Owner", avatarUrl: "" };
+  if (value === String(authorId)) return { _id: authorId, username: "author", name: "PR Author", avatarUrl: "" };
+  if (value === String(reviewerId)) return { _id: reviewerId, username: "reviewer", name: "Reviewer", avatarUrl: "" };
+  return null;
+}
+
+const UserModel = {
+  findById(id) {
+    return { select() { return Promise.resolve(identity(id)); } };
+  },
+};
 
 function response() {
   return {
@@ -71,7 +90,14 @@ function pull(overrides = {}) {
     comments: [],
     reviews: [],
     async save() { this.saved = true; },
-    async populate() { return this; },
+    async populate(path) {
+      const populateIdentity = (value) => value && typeof value === "object" && value.username ? value : identity(value);
+      if (path === "author") this.author = populateIdentity(this.author);
+      if (path === "mergedBy") this.mergedBy = populateIdentity(this.mergedBy);
+      if (path === "comments.author") this.comments = this.comments.map((comment) => ({ ...comment, author: populateIdentity(comment.author) }));
+      if (path === "reviews.reviewer") this.reviews = this.reviews.map((review) => ({ ...review, reviewer: populateIdentity(review.reviewer) }));
+      return this;
+    },
     toObject() { return { ...this, save: undefined, toObject: undefined }; },
     ...overrides,
   };
@@ -85,6 +111,11 @@ test("pull request schema validates required fields and repository-number unique
   assert.ok(error.errors.title);
   assert.ok(error.errors.author);
   assert.ok(PullRequest.schema.indexes().some(([fields, options]) => fields.repository === 1 && fields.number === 1 && options.unique));
+  assert.equal(User.modelName, "User");
+  assert.equal(PullRequest.schema.path("author").options.ref, "User");
+  assert.equal(PullRequest.schema.path("mergedBy").options.ref, "User");
+  assert.equal(PullRequest.schema.path("comments.author").options.ref, "User");
+  assert.equal(PullRequest.schema.path("reviews.reviewer").options.ref, "User");
 });
 
 test("create pull request validates title, branches, changes, duplicates, and atomic numbering", async () => {
@@ -100,7 +131,7 @@ test("create pull request validates title, branches, changes, duplicates, and at
     findOneAndUpdate: async (...args) => { increment = args; return { pullRequestCounter: 7 }; },
   };
   let compareResult = comparison();
-  const controller = createPullRequestController({ PullModel, RepoModel, compare: async () => compareResult });
+  const controller = createPullRequestController({ PullModel, RepoModel, UserModel, compare: async () => compareResult });
   const request = (body) => ({ repository: repo, user: { id: String(authorId) }, body });
 
   let res = response();
@@ -129,6 +160,8 @@ test("create pull request validates title, branches, changes, duplicates, and at
   assert.equal(created[0].mergeBaseAtCreation, "c1");
   assert.deepEqual(created[0].commitIds, ["f1"]);
   assert.equal(created[0].changedFilesSnapshot[0].path, "src/feature.js");
+  assert.equal(String(created[0].author._id), String(authorId));
+  assert.equal(res.body.pullRequest.author.username, "author");
   assert.deepEqual(increment[1], { $inc: { pullRequestCounter: 1 } });
 });
 
@@ -171,7 +204,7 @@ test("merge controller rejects conflicts and closed PRs, then merges an open PR"
   const document = pull();
   const PullModel = { findOne: () => query(document) };
   let result = comparison({ summary: { filesChanged: 1, additions: 1, deletions: 0, hasConflicts: true }, files: [{ path: "x", conflict: true }] });
-  const controller = createPullRequestController({ PullModel, compare: async () => result });
+  const controller = createPullRequestController({ PullModel, UserModel, compare: async () => result });
   let res = response();
   await controller.merge({ repository: repo, user: { id: String(ownerId) }, params: { number: "1" } }, res);
   assert.equal(res.statusCode, 409);
@@ -191,6 +224,8 @@ test("merge controller rejects conflicts and closed PRs, then merges an open PR"
   assert.equal(document.finalCompareHead, "f1");
   assert.deepEqual(document.finalCommitIds, ["f1"]);
   assert.equal(document.finalChangedFilesSnapshot.length, 1);
+  assert.equal(String(document.mergedBy._id), String(ownerId));
+  assert.equal(res.body.pullRequest.mergedBy.username, "owner");
 });
 
 test("details returns safe identities and a merged historical comparison", async () => {
@@ -221,7 +256,7 @@ test("details returns safe identities and a merged historical comparison", async
 test("review decisions validate permissions and latest decisions control merge blocking", async () => {
   const repo = repository();
   const document = pull();
-  const controller = createPullRequestController({ PullModel: { findOne: () => query(document) }, compare: async () => comparison() });
+  const controller = createPullRequestController({ PullModel: { findOne: () => query(document) }, UserModel, compare: async () => comparison() });
   let res = response();
   await controller.review({ repository: repo, user: { id: String(ownerId) }, params: { number: "1" }, body: { decision: "changes_requested", body: "Please fix it" } }, res);
   assert.equal(res.statusCode, 201);
@@ -242,7 +277,7 @@ test("review decisions validate permissions and latest decisions control merge b
 test("reviews reject missing bodies, self approval, non-owner decisions, and closed PRs", async () => {
   const repo = repository();
   const document = pull();
-  const controller = createPullRequestController({ PullModel: { findOne: () => query(document) } });
+  const controller = createPullRequestController({ PullModel: { findOne: () => query(document) }, UserModel });
   const submit = async (userId, decision, body) => {
     const res = response();
     await controller.review({ repository: repo, user: { id: String(userId) }, params: { number: "1" }, body: { decision, body } }, res);
@@ -250,7 +285,7 @@ test("reviews reject missing bodies, self approval, non-owner decisions, and clo
   };
   assert.equal((await submit(ownerId, "commented", "")).statusCode, 400);
   assert.equal((await submit(authorId, "approved", "")).statusCode, 403);
-  assert.equal((await submit(new mongoose.Types.ObjectId(), "changes_requested", "Fix")).statusCode, 403);
+  assert.equal((await submit(reviewerId, "changes_requested", "Fix")).statusCode, 403);
   assert.equal((await submit(authorId, "commented", "A note")).statusCode, 201);
   document.status = "closed";
   assert.equal((await submit(ownerId, "commented", "Late")).statusCode, 409);
@@ -267,6 +302,53 @@ test("review summary uses latest reviewer decision and makes approvals stale aft
   assert.equal(summary.blocking, false);
   assert.equal(summary.approved, 0);
   assert.equal(summary.latestByReviewer[0].stale, true);
+});
+
+test("authenticated user helper supports the real JWT request shape and rejects invalid or deleted users", async () => {
+  assert.equal(getAuthenticatedUserId({ user: { id: authorId } }), String(authorId));
+  assert.equal(String((await requireAuthenticatedUser({ user: { id: authorId } }, UserModel))._id), String(authorId));
+  await assert.rejects(() => requireAuthenticatedUser({ user: { id: "not-an-object-id" } }, UserModel), { status: 401, message: "Invalid authenticated user" });
+  await assert.rejects(() => requireAuthenticatedUser({ user: { id: new mongoose.Types.ObjectId() } }, UserModel), { status: 401, message: "Authenticated user no longer exists" });
+  await assert.rejects(() => requireAuthenticatedUser({}, UserModel), { status: 401, message: "Authentication required" });
+});
+
+test("JWT id payload becomes req.user.id and resolves to the same User document", async (t) => {
+  const originalSecret = process.env.JWT_SECRET_KEY;
+  process.env.JWT_SECRET_KEY = "pull-auth-test-secret";
+  t.after(() => { process.env.JWT_SECRET_KEY = originalSecret; });
+  const token = jwt.sign({ id: String(authorId) }, process.env.JWT_SECRET_KEY);
+  const requestUser = readAuthenticatedUser({ headers: { authorization: `Bearer ${token}` } });
+  assert.deepEqual(requestUser, { id: String(authorId) });
+  const user = await requireAuthenticatedUser({ user: requestUser }, UserModel);
+  assert.equal(user.username, "author");
+});
+
+test("comment and review writes use and return populated User ObjectIds", async () => {
+  const repo = repository();
+  const document = pull();
+  const controller = createPullRequestController({ PullModel: { findOne: () => query(document) }, UserModel });
+  let res = response();
+  await controller.comment({ repository: repo, user: { id: String(authorId) }, params: { number: "1" }, body: { body: "Hello" } }, res);
+  assert.equal(res.statusCode, 201);
+  assert.equal(String(document.comments[0].author._id), String(authorId));
+  assert.equal(res.body.comment.author.username, "author");
+  res = response();
+  await controller.review({ repository: repo, user: { id: String(ownerId) }, params: { number: "1" }, body: { decision: "commented", body: "Reviewed" } }, res);
+  assert.equal(res.statusCode, 201);
+  assert.equal(String(document.reviews[0].reviewer._id), String(ownerId));
+  assert.equal(res.body.review.reviewer.username, "owner");
+});
+
+test("new PR writes fail with 401 when the authenticated User reference cannot resolve", async () => {
+  const repo = repository();
+  const PullModel = { findOne: async () => null, create: async (value) => pull(value) };
+  const RepoModel = { findOneAndUpdate: async () => ({ pullRequestCounter: 2 }) };
+  const controller = createPullRequestController({ PullModel, RepoModel, UserModel, compare: async () => comparison() });
+  for (const user of [null, { id: "bad" }, { id: String(new mongoose.Types.ObjectId()) }]) {
+    const res = response();
+    await controller.create({ repository: repo, user, body: { title: "Feature", baseBranch: "main", compareBranch: "feature" } }, res);
+    assert.equal(res.statusCode, 401);
+  }
 });
 
 test("pull request routes are registered before the generic repository route", () => {
