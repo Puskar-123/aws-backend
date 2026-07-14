@@ -1,5 +1,5 @@
 const path = require("path");
-const { structuredPatch } = require("diff");
+const { createTwoFilesPatch, structuredPatch } = require("diff");
 const { normalizeRepoPath } = require("../utils/repoPath");
 
 const MAX_INLINE_BYTES = 1024 * 1024;
@@ -19,7 +19,10 @@ function isProtectedDiffPath(filePath) {
   return basename === ".env"
     || basename.startsWith(".env.")
     || basename.endsWith(".pem")
-    || basename.endsWith(".key");
+    || basename.endsWith(".key")
+    || basename === "service-account.json"
+    || basename === "credentials.json"
+    || basename.endsWith("-credentials.json");
 }
 
 function storageKey(file) {
@@ -156,7 +159,12 @@ function mapHunks(oldText, newText, oldPath, newPath) {
       lines,
     };
   });
-  return { hunks, additions, deletions };
+  return {
+    hunks,
+    additions,
+    deletions,
+    patch: createTwoFilesPatch(oldPath, newPath, oldText, newText, "", "", { context: 3 }),
+  };
 }
 
 async function readTextVersion(file, readObject, filePath, maxBytes) {
@@ -181,6 +189,10 @@ async function createFileDiff(change, readObject, maxBytes) {
     additions: 0,
     deletions: 0,
     binary: false,
+    isBinary: false,
+    patch: null,
+    oldContent: null,
+    newContent: null,
     hunks: [],
   };
 
@@ -203,11 +215,13 @@ async function createFileDiff(change, readObject, maxBytes) {
     return { ...base, tooLarge: true, message: "File is too large for inline diff" };
   }
   if (previous.binary || current.binary) {
-    return { ...base, binary: true, message: "Binary file changed" };
+    return { ...base, binary: true, isBinary: true, message: "Binary file changed" };
   }
   if (change.status === "modified" && previous.text === current.text) return null;
   return {
     ...base,
+    oldContent: previous.text,
+    newContent: current.text,
     ...mapHunks(previous.text, current.text, oldPath, filePath),
   };
 }
@@ -237,6 +251,7 @@ module.exports = {
   buildCommitDiff,
   classifyChanges,
   createS3ObjectReader,
+  filesEquivalent,
   isProtectedDiffPath,
   mapHunks,
 };

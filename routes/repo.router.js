@@ -13,6 +13,7 @@ const { previewFile } = require("../controllers/previewController");
 const { deleteFile, renameFile } = require("../controllers/fileManageController");
 const { listBranches, createBranch, deleteBranch } = require("../controllers/branchController");
 const { getSnapshot, getSnapshotFile } = require("../controllers/snapshotController");
+const { compareBranches } = require("../controllers/compareController");
 const { requireRepositoryRead, requireRepositoryWrite } = require("../utils/repositoryAccess");
 
 const repoRouter = express.Router();
@@ -26,6 +27,7 @@ repoRouter.post("/pull/:id", requireRepositoryRead, pullRepo);
 repoRouter.post("/create", repoController.createRepository);
 
 // Branch, history, and clone/snapshot APIs. Keep these before /:id.
+repoRouter.get("/:id/compare", compareBranches);
 repoRouter.get("/:id/branches", listBranches);
 repoRouter.post("/:id/branches", createBranch);
 repoRouter.get("/:id/branches/:branchName/snapshot", getSnapshot);
