@@ -3,6 +3,12 @@ const { Schema } = mongoose;
 
 const UserSchema = new Schema(
 {
+  name: {
+    type: String,
+    trim: true,
+    maxlength: 80,
+    default: "",
+  },
   username: {
     type: String,
     required: true,
@@ -15,6 +21,30 @@ const UserSchema = new Schema(
   },
   password: {
     type: String,
+  },
+  bio: {
+    type: String,
+    maxlength: 160,
+    default: "",
+  },
+  avatarUrl: {
+    type: String,
+    default: "",
+  },
+  location: {
+    type: String,
+    maxlength: 100,
+    default: "",
+  },
+  website: {
+    type: String,
+    maxlength: 200,
+    default: "",
+  },
+  company: {
+    type: String,
+    maxlength: 100,
+    default: "",
   },
   repositories: [
     {
@@ -30,6 +60,14 @@ const UserSchema = new Schema(
       ref: "User",
     },
   ],
+  followers: [{
+    type: Schema.Types.ObjectId,
+    ref: "User",
+  }],
+  following: [{
+    type: Schema.Types.ObjectId,
+    ref: "User",
+  }],
   starRepos: [
     {
       default: [],
@@ -37,6 +75,10 @@ const UserSchema = new Schema(
       ref: "Repository",
     },
   ],
+  starredRepositories: [{
+    type: Schema.Types.ObjectId,
+    ref: "Repository",
+  }],
 },
 {
   timestamps: true

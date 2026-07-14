@@ -1,5 +1,7 @@
 const express = require("express");
 const userController = require("../controllers/userController");
+const profileController = require("../controllers/profileController");
+const { optionalAuth, requireAuth } = require("../middleware/authMiddleware");
 
 const userRouter = express.Router();
 
@@ -11,7 +13,8 @@ userRouter.post("/signup", userController.signup);
 userRouter.post("/login", userController.login);
 
 // ✅ PROFILE
-userRouter.get("/profile/:id", userController.getUserProfile);
+userRouter.get("/profile/:id", optionalAuth, profileController.getProfile);
+userRouter.put("/profile/:id", requireAuth, profileController.updateProfile);
 userRouter.put("/update/:id", userController.updateUserProfile);
 userRouter.delete("/delete/:id", userController.deleteUserProfile);
 

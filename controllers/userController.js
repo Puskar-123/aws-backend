@@ -36,13 +36,22 @@ async function signup(req, res) {
     const hashedPassword = await bcrypt.hash(password, 10);
 
     const newUser = {
+      name: "",
       username,
       password: hashedPassword,
       email,
+      bio: "",
+      avatarUrl: "",
+      location: "",
+      website: "",
+      company: "",
       repositories: [],
       followers: [],      // ✅ NEW
       following: [],      // ✅ NEW
       starRepos: [],
+      starredRepositories: [],
+      createdAt: new Date(),
+      updatedAt: new Date(),
     };
 
     const result = await users.insertOne(newUser);
@@ -251,6 +260,8 @@ async function deleteUserProfile(req, res) {
 /* ================== EXPORT ================== */
 
 module.exports = {
+  connectClient,
+  getCollection,
   signup,
   login,
   getAllUsers,
