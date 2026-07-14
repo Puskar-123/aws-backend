@@ -50,7 +50,7 @@ test("private repository reads return 401 without a JWT and 403 for another user
 test("repository, PR, and issue detail routes retain backend read authorization", () => {
   const router = require("../routes/repo.router");
   const find = (path, method) => router.stack.find((layer) => layer.route?.path === path && layer.route.methods[method]).route.stack.map((layer) => layer.handle);
-  assert.equal(find("/:id", "get")[0], requireRepositoryRead);
+  assert.equal(find("/:id", "get")[1], requireRepositoryRead);
   assert.equal(find("/:id/pulls/:number", "get")[1], requireRepositoryRead);
   assert.equal(find("/:id/issues/:number", "get")[1], requireRepositoryRead);
   assert.equal(find("/:id/issues/:number/comments", "post")[1], requireRepositoryRead);

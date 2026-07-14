@@ -2,6 +2,7 @@ const mongoose = require("mongoose");
 const Repository = require("../models/repoModel");
 const { s3, S3_BUCKET } = require("../config/aws-config");
 const { isSensitiveRepoPath } = require("../utils/repoPath");
+const { social: repositorySocial } = require("./repositorySocialController");
 
 // ✅ CREATE REPOSITORY
 async function createRepository(req, res) {
@@ -149,6 +150,7 @@ async function fetchRepositoryById(req, res) {
 
     const repository = await Repository.findById(id)
       .populate("owner", "_id username")
+      .populate({ path: "forkedFrom", select: "name owner", populate: { path: "owner", select: "username" } })
       .populate("issues");
 
     if (!repository) {
@@ -160,6 +162,11 @@ async function fetchRepositoryById(req, res) {
       try { return isSensitiveRepoPath(file.path || file.filename); } catch { return false; }
     });
     response.content = response.content.filter((file) => !protectedFiles.includes(file));
+    response.social = await repositorySocial(repository, req.user?.id || null);
+    delete response.stars;
+    delete response.watchers;
+    delete response.forks;
+    delete response.forkedBy;
     if (protectedFiles.length) {
       response.warnings = [
         `${protectedFiles.length} protected file(s) are hidden. Previously uploaded secrets must be removed manually.`,

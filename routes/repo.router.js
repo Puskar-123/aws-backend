@@ -16,6 +16,7 @@ const { getSnapshot, getSnapshotFile } = require("../controllers/snapshotControl
 const { compareBranches } = require("../controllers/compareController");
 const pullRequestController = require("../controllers/pullRequestController");
 const issueController = require("../controllers/issueController");
+const socialController = require("../controllers/repositorySocialController");
 const { optionalAuth, requireAuth } = require("../middleware/authMiddleware");
 const { requireRepositoryRead, requireRepositoryWrite } = require("../utils/repositoryAccess");
 
@@ -28,6 +29,13 @@ repoRouter.post("/commit/:id", requireRepositoryWrite, createCommit);
 repoRouter.post("/push/:id", requireRepositoryWrite, pushRepo);
 repoRouter.post("/pull/:id", requireRepositoryWrite, pullRepo);
 repoRouter.post("/create", requireAuth, repoController.createRepository);
+repoRouter.post("/:id/star", requireAuth, requireRepositoryRead, socialController.star);
+repoRouter.delete("/:id/star", requireAuth, requireRepositoryRead, socialController.unstar);
+repoRouter.get("/:id/star-status", optionalAuth, requireRepositoryRead, socialController.status);
+repoRouter.post("/:id/watch", requireAuth, requireRepositoryRead, socialController.watch);
+repoRouter.delete("/:id/watch", requireAuth, requireRepositoryRead, socialController.unwatch);
+repoRouter.get("/:id/watch-status", optionalAuth, requireRepositoryRead, socialController.status);
+repoRouter.post("/:id/fork", requireAuth, requireRepositoryRead, socialController.fork);
 
 // Branch, history, and clone/snapshot APIs. Keep these before /:id.
 repoRouter.get("/:id/compare", compareBranches);
@@ -79,6 +87,6 @@ repoRouter.get("/preview/:id/*", previewFile);
 repoRouter.get("/file/:id/*", getFile);
 repoRouter.put("/file/:id/*", requireRepositoryWrite, renameFile);
 repoRouter.delete("/file/:id/*", requireRepositoryWrite, deleteFile);
-repoRouter.get("/:id", requireRepositoryRead, repoController.fetchRepositoryById);
+repoRouter.get("/:id", optionalAuth, requireRepositoryRead, repoController.fetchRepositoryById);
 
 module.exports = repoRouter;

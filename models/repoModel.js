@@ -121,6 +121,13 @@ const RepositorySchema = new Schema(
     min: 0,
   },
 
+  stars: [{ type: Schema.Types.ObjectId, ref: "User" }],
+  watchers: [{ type: Schema.Types.ObjectId, ref: "User" }],
+  forks: [{ type: Schema.Types.ObjectId, ref: "Repository" }],
+  forkedFrom: { type: Schema.Types.ObjectId, ref: "Repository", default: null },
+  forkedBy: { type: Schema.Types.ObjectId, ref: "User", default: null },
+  forkDepth: { type: Number, default: 0, min: 0 },
+
   visibility: {
     type: String,
     enum: ["public", "private"],
@@ -144,5 +151,12 @@ const RepositorySchema = new Schema(
   timestamps: true,
 }
 );
+
+RepositorySchema.index({ owner: 1, forkedFrom: 1 }, {
+  unique: true,
+  partialFilterExpression: { forkedFrom: { $type: "objectId" } },
+});
+RepositorySchema.index({ stars: 1 });
+RepositorySchema.index({ watchers: 1 });
 
 module.exports = mongoose.model("Repository", RepositorySchema);

@@ -13,9 +13,10 @@ function createProfileController({
   connect = connectClient,
   users = getCollection,
   findRepositories = (ownerId) => Repository.find({ owner: ownerId }).lean(),
-  findStarredRepositories = (ids) => ids.length
-    ? Repository.find({ _id: { $in: ids } }).lean()
-    : [],
+  findStarredRepositories = (profileId, viewerId) => Repository.find({
+    stars: profileId,
+    ...(viewerId ? { $or: [{ visibility: { $ne: "private" } }, { owner: viewerId }] } : { visibility: { $ne: "private" } }),
+  }).populate("owner", "username").lean(),
 } = {}) {
   const getProfile = async (req, res) => {
     const { id } = req.params;
@@ -26,8 +27,7 @@ function createProfileController({
       if (!user) return res.status(404).json({ error: "User not found" });
       const isOwner = String(req.user?.id || "") === String(id);
       const repositories = await findRepositories(new ObjectId(id));
-      const starredIds = user.starredRepositories || user.starRepos || [];
-      const starredRepositories = await findStarredRepositories(starredIds);
+      const starredRepositories = await findStarredRepositories(new ObjectId(id), req.user?.id || null);
       return res.json(buildProfileResponse(user, repositories, { isOwner, starredRepositories }));
     } catch (error) {
       console.error("Profile read failed:", error.message);

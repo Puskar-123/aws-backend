@@ -129,6 +129,9 @@ function repositorySummary(repository) {
     commitCount: Array.isArray(repository.commits) ? repository.commits.length : 0,
     starCount: Number(repository.starCount)
       || (Array.isArray(repository.stars) ? repository.stars.length : 0),
+    forkCount: Array.isArray(repository.forks) ? repository.forks.length : 0,
+    owner: repository.owner && typeof repository.owner === "object" ? { _id: repository.owner._id, username: repository.owner.username || "" } : null,
+    forkedFrom: repository.forkedFrom || null,
     createdAt: repository.createdAt,
     updatedAt: repository.updatedAt,
   };
@@ -183,7 +186,7 @@ function buildProfileResponse(user, allRepositories, { isOwner = false, starredR
     recentActivity: buildRecentActivity(visibleRepositories),
     contributions,
     starredRepositories: (Array.isArray(starredRepositories) ? starredRepositories : [])
-      .filter((repository) => normalizeVisibility(repository.visibility) === "public")
+      .filter((repository) => isOwner || normalizeVisibility(repository.visibility) === "public")
       .map(repositorySummary),
   };
 }
