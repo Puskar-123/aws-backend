@@ -1,5 +1,6 @@
 const Repository = require("../models/repoModel");
 const { isSensitiveRepoPath } = require("../utils/repoPath");
+const { safeNotifyRepositoryWatchers } = require("../services/notificationService");
 
 const ids = (value) => (Array.isArray(value) ? value : []).map(String);
 const cleanFiles = (files = []) => files.filter((file) => {
@@ -34,6 +35,15 @@ function createRepositorySocialController({ RepoModel = Repository } = {}) {
       while (await RepoModel.exists({ name })) { suffix += 1; name = `${source.name}-fork${suffix > 1 ? `-${suffix}` : ""}`; }
       const forked = await RepoModel.create({ name, owner: userId, description: source.description || "", visibility: source.visibility, content: cleanFiles(source.content), commits: cloneCommits(source.commits), branches: (source.branches || []).map((b) => ({ ...(b.toObject ? b.toObject() : b), _id: undefined })), defaultBranch: source.defaultBranch || "main", forkedFrom: source._id, forkedBy: userId, forkDepth: Number(source.forkDepth || 0) + 1 });
       await RepoModel.findByIdAndUpdate(source._id, { $addToSet: { forks: forked._id } });
+      await safeNotifyRepositoryWatchers(source, {
+        actor: userId,
+        type: "repository_forked",
+        title: `${source.name} was forked`,
+        message: `A new fork named ${forked.name} was created`,
+        url: `/repo/${forked._id}`,
+        eventKey: `fork:${source._id}:${forked._id}`,
+        metadata: { fork: forked._id },
+      });
       if (forked.populate) await forked.populate("owner", "_id username");
       const forkOwner = forked.owner && typeof forked.owner === "object"
         ? { _id: forked.owner._id, username: forked.owner.username || "" }

@@ -1,6 +1,7 @@
 const { getAccessibleRepository, sendAccessError } = require("../utils/repositoryAccess");
 const { ensureDefaultBranch, validateBranchName } = require("../utils/branches");
 const { getBranchHistory } = require("../services/branchService");
+const { safeNotifyRepositoryWatchers } = require("../services/notificationService");
 
 function createBranchController({ getRepository = getAccessibleRepository } = {}) {
   async function listBranches(req, res) {
@@ -36,6 +37,15 @@ function createBranchController({ getRepository = getAccessibleRepository } = {}
       if (!source) return res.status(404).json({ error: `Source branch '${sourceName}' does not exist` });
       repo.branches.push({ name, head: source.head || null, isDefault: false });
       await repo.save();
+      await safeNotifyRepositoryWatchers(repo, {
+        actor: req.user?.id,
+        type: "branch_created",
+        title: `New branch in ${repo.name}`,
+        message: `Branch ${name} was created from ${sourceName}`,
+        url: `/repo/${repo._id}?branch=${encodeURIComponent(name)}`,
+        eventKey: `branch:${repo._id}:${name}`,
+        metadata: { branch: name, sourceBranch: sourceName },
+      });
       const created = repo.branches.find((branch) => branch.name === name);
       return res.status(201).json({
         message: "Branch created successfully",

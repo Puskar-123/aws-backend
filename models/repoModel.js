@@ -33,6 +33,8 @@ const RepositorySchema = new Schema(
       hash: {
         type: String,
       },
+      size: Number,
+      contentType: String,
     },
   ],
 
@@ -50,6 +52,8 @@ const RepositorySchema = new Schema(
           s3Key: String,
           storageKey: String,
           hash: String,
+          size: Number,
+          contentType: String,
           status: String,
           oldPath: String,
         },
@@ -62,6 +66,8 @@ const RepositorySchema = new Schema(
           s3Key: String,
           storageKey: String,
           hash: String,
+          size: Number,
+          contentType: String,
         },
       ],
 

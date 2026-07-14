@@ -46,6 +46,8 @@ function sendAccessError(res, error) {
 function repositoryAccessMiddleware(options) {
   return async (req, res, next) => {
     try {
+      const userId = getAuthenticatedUserId(req);
+      if (userId && !req.user) req.user = { id: userId };
       req.repository = await getAccessibleRepository(req, req.params.id, options);
       next();
     } catch (error) {

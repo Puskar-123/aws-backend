@@ -18,6 +18,7 @@ const {
 } = require("../services/pullRequestService");
 const { validateBranchName } = require("../utils/branches");
 const { getAuthenticatedUserId, requireAuthenticatedUser } = require("../utils/authUser");
+const { safeNotifyRepositoryWatchers } = require("../services/notificationService");
 
 const safeAuthorFields = "_id username name avatarUrl";
 
@@ -51,6 +52,7 @@ function createPullRequestController({
   compare = compareRepository,
   storage = s3,
   bucket = S3_BUCKET,
+  notify = safeNotifyRepositoryWatchers,
 } = {}) {
   const compareLive = (repository, base, compareBranch) => compare(repository, base, compareBranch, { s3: storage, bucket });
 
@@ -101,6 +103,13 @@ function createPullRequestController({
         changedFilesSnapshot: storedComparison.files,
       });
       if (pullRequest.populate) await pullRequest.populate("author", safeAuthorFields);
+      await notify(repository, {
+        actor: authenticatedUser._id, type: "pull_request_opened",
+        title: `New pull request in ${repository.name}`, message: `#${pullRequest.number}: ${title}`,
+        url: `/repo/${repository._id}/pulls/${pullRequest.number}`,
+        eventKey: `pr-open:${pullRequest._id || pullRequest.number}`,
+        metadata: { pullRequest: pullRequest._id, number: pullRequest.number },
+      });
       return res.status(201).json({ message: "Pull request created successfully", pullRequest: pullObject(pullRequest) });
     } catch (error) { return sendError(res, error); }
   }
@@ -203,6 +212,13 @@ function createPullRequestController({
       await pullRequest.save();
       if (pullRequest.populate) await pullRequest.populate("comments.author", safeAuthorFields);
       const created = pullObject(pullRequest).comments.at(-1);
+      await notify(req.repository, {
+        actor: authenticatedUser._id, type: "pull_request_commented",
+        title: `New comment on PR #${pullRequest.number}`, message: body,
+        url: `/repo/${req.repository._id}/pulls/${pullRequest.number}`,
+        eventKey: `pr-comment:${pullRequest._id}:${created?._id || now.getTime()}`,
+        metadata: { pullRequest: pullRequest._id, comment: created?._id },
+      });
       return res.status(201).json({ message: "Comment added", comment: created });
     } catch (error) { return sendError(res, error); }
   }
@@ -261,6 +277,13 @@ function createPullRequestController({
       pullRequest.finalChangedFilesSnapshot = finalComparison.files;
       await pullRequest.save();
       if (pullRequest.populate) await pullRequest.populate("mergedBy", safeAuthorFields);
+      await notify(req.repository, {
+        actor: authenticatedUser._id, type: "pull_request_merged",
+        title: `PR #${pullRequest.number} was merged`, message: pullRequest.title,
+        url: `/repo/${req.repository._id}/pulls/${pullRequest.number}`,
+        eventKey: `pr-merge:${pullRequest._id}`,
+        metadata: { pullRequest: pullRequest._id, commit: commit.hash },
+      });
       return res.json({ message: "Pull request merged", pullRequest: pullObject(pullRequest), mergeCommit: commit.hash });
     } catch (error) { return sendError(res, error); }
   }
@@ -294,6 +317,13 @@ function createPullRequestController({
       await pullRequest.populate("reviews.reviewer", safeAuthorFields);
       const created = pullRequest.reviews.at(-1);
       const reviewValue = created?.toObject ? created.toObject() : { ...created };
+      await notify(req.repository, {
+        actor: authenticatedUser._id, type: "pull_request_reviewed",
+        title: `PR #${pullRequest.number} was reviewed`, message: decision.replaceAll("_", " "),
+        url: `/repo/${req.repository._id}/pulls/${pullRequest.number}`,
+        eventKey: `pr-review:${pullRequest._id}:${reviewValue?._id || now.getTime()}`,
+        metadata: { pullRequest: pullRequest._id, review: reviewValue?._id, decision },
+      });
       return res.status(201).json({ message: "Review submitted", review: reviewValue, reviewSummary: reviewSummary(pullRequest.reviews, commitHead) });
     } catch (error) { return sendError(res, error); }
   }

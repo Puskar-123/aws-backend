@@ -30,7 +30,10 @@ function isSensitiveRepoPath(filePath) {
   return basename === ".env"
     || (basename.startsWith(".env.") && basename !== ".env.example")
     || basename.endsWith(".pem")
-    || basename.endsWith(".key");
+    || basename.endsWith(".key")
+    || basename === "service-account.json"
+    || basename === "credentials.json"
+    || basename.endsWith("-credentials.json");
 }
 
 function isDefaultIgnoredRepoPath(filePath) {

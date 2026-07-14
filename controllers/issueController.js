@@ -5,6 +5,7 @@ const PullRequest = require("../models/pullRequestModel");
 const User = require("../models/userModel");
 const { getAccessibleRepository } = require("../utils/repositoryAccess");
 const { getAuthenticatedUserId, requireAuthenticatedUser } = require("../utils/authUser");
+const { safeNotifyRepositoryWatchers } = require("../services/notificationService");
 
 const identityFields = "_id username name avatarUrl";
 const priorities = new Set(["low", "medium", "high", "critical", "none"]);
@@ -76,6 +77,7 @@ function createIssueController({
   RepoModel = Repository,
   PullModel = PullRequest,
   UserModel = User,
+  notify = safeNotifyRepositoryWatchers,
 } = {}) {
   const populate = (query) => query
     .populate("author", identityFields)
@@ -101,6 +103,11 @@ function createIssueController({
       if (!counter) throw issueError(404, "Repository not found");
       const issue = await IssueModel.create({ repository: req.repository._id, number: counter.issueCounter, title, body, description: body, author: user._id, priority, labels });
       if (issue.populate) await issue.populate("author", identityFields);
+      await notify(req.repository, {
+        actor: user._id, type: "issue_opened", title: `New issue in ${req.repository.name}`,
+        message: `#${issue.number}: ${title}`, url: `/repo/${req.repository._id}/issues/${issue.number}`,
+        eventKey: `issue-open:${issue._id || issue.number}`, metadata: { issue: issue._id, number: issue.number },
+      });
       return res.status(201).json({ message: "Issue created", issue: issueObject(issue) });
     } catch (error) { return sendError(res, error); }
   }
@@ -174,7 +181,14 @@ function createIssueController({
       issue.updatedAt = now;
       await issue.save();
       if (issue.populate) await issue.populate("comments.author", identityFields);
-      return res.status(201).json({ message: "Comment added", comment: issueObject(issue).comments.at(-1) });
+      const created = issueObject(issue).comments.at(-1);
+      await notify(req.repository, {
+        actor: user._id, type: "issue_commented", title: `New comment on issue #${issue.number}`,
+        message: body, url: `/repo/${req.repository._id}/issues/${issue.number}`,
+        eventKey: `issue-comment:${issue._id}:${created?._id || now.getTime()}`,
+        metadata: { issue: issue._id, comment: created?._id },
+      });
+      return res.status(201).json({ message: "Comment added", comment: created });
     } catch (error) { return sendError(res, error); }
   }
 
@@ -191,6 +205,13 @@ function createIssueController({
       issue.closedAt = reopen ? null : new Date();
       await issue.save();
       if (!reopen && issue.populate) await issue.populate("closedBy", identityFields);
+      await notify(req.repository, {
+        actor: user._id, type: reopen ? "issue_reopened" : "issue_closed",
+        title: `Issue #${issue.number} was ${reopen ? "reopened" : "closed"}`, message: issue.title,
+        url: `/repo/${req.repository._id}/issues/${issue.number}`,
+        eventKey: `issue-${reopen ? "reopen" : "close"}:${issue._id}:${Date.now()}`,
+        metadata: { issue: issue._id },
+      });
       return res.json({ message: reopen ? "Issue reopened" : "Issue closed", issue: issueObject(issue) });
     } catch (error) { return sendError(res, error); }
   }

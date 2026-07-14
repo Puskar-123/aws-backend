@@ -17,6 +17,7 @@ const { compareBranches } = require("../controllers/compareController");
 const pullRequestController = require("../controllers/pullRequestController");
 const issueController = require("../controllers/issueController");
 const socialController = require("../controllers/repositorySocialController");
+const fileEditController = require("../controllers/fileEditController");
 const { optionalAuth, requireAuth } = require("../middleware/authMiddleware");
 const { requireRepositoryRead, requireRepositoryWrite } = require("../utils/repositoryAccess");
 
@@ -36,6 +37,8 @@ repoRouter.post("/:id/watch", requireAuth, requireRepositoryRead, socialControll
 repoRouter.delete("/:id/watch", requireAuth, requireRepositoryRead, socialController.unwatch);
 repoRouter.get("/:id/watch-status", optionalAuth, requireRepositoryRead, socialController.status);
 repoRouter.post("/:id/fork", requireAuth, requireRepositoryRead, socialController.fork);
+repoRouter.get("/:id/file-editor", requireRepositoryWrite, fileEditController.read);
+repoRouter.put("/:id/file-editor", requireRepositoryWrite, fileEditController.update);
 
 // Branch, history, and clone/snapshot APIs. Keep these before /:id.
 repoRouter.get("/:id/compare", compareBranches);

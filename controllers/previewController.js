@@ -68,6 +68,7 @@ async function previewFile(req, res) {
       path: requestedPath,
       content: binary ? null : data.Body.toString("utf8"),
       contentType,
+      size: data.Body.length,
       binary,
       previewSupported: !binary,
     });

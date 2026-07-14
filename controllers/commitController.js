@@ -1,4 +1,5 @@
 const { commitRepo } = require("./commit");
+const { safeNotifyRepositoryWatchers } = require("../services/notificationService");
 
 async function createCommit(req, res) {
   try {
@@ -12,6 +13,15 @@ async function createCommit(req, res) {
     }
 
     const commit = await commitRepo(id, message, req.body);
+    await safeNotifyRepositoryWatchers(req.repository, {
+      actor: req.user?.id,
+      type: "commit",
+      title: `New commit in ${req.repository.name}`,
+      message,
+      url: `/repo/${id}?branch=${encodeURIComponent(commit.branch)}`,
+      eventKey: `commit:${id}:${commit.hash}`,
+      metadata: { commit: commit.hash, branch: commit.branch },
+    });
 
     res.status(200).json({
       message: "Commit created successfully!",
