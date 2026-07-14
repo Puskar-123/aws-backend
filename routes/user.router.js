@@ -4,6 +4,7 @@ const profileController = require("../controllers/profileController");
 const { optionalAuth, requireAuth } = require("../middleware/authMiddleware");
 const sessionController = require("../controllers/sessionController");
 const { noStore } = require("../middleware/noStore");
+const cliAuthController = require("../controllers/cliAuthController");
 
 const userRouter = express.Router();
 
@@ -13,6 +14,9 @@ userRouter.get("/allUsers", userController.getAllUsers);
 // ✅ AUTH
 userRouter.post("/signup", userController.signup);
 userRouter.post("/login", userController.login);
+userRouter.post("/cli/login", noStore, cliAuthController.login);
+userRouter.post("/cli/logout", noStore, requireAuth, cliAuthController.logout);
+userRouter.get("/cli/session", noStore, requireAuth, cliAuthController.session);
 userRouter.get("/session", noStore, requireAuth, sessionController.session);
 
 // ✅ PROFILE

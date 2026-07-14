@@ -23,6 +23,7 @@ const fileEditController = require("../controllers/fileEditController");
 const publicDiscoveryController = require("../controllers/publicDiscoveryController");
 const collaboratorController = require("../controllers/repositoryCollaboratorController");
 const branchProtectionController = require("../controllers/branchProtectionController");
+const repositoryCliController = require("../controllers/repositoryCliController");
 const { optionalAuth, requireAuth } = require("../middleware/authMiddleware");
 const repositoryAccess = require("../utils/repositoryAccess");
 const { requireRepositoryRead, requireRepositoryWrite } = repositoryAccess;
@@ -31,6 +32,12 @@ const requireRepositoryPermission = repositoryAccess.requireRepositoryPermission
 
 const repoRouter = express.Router();
 const upload = multer({ dest: "uploads/" });
+const cliUpload = multer({ dest: "uploads/", limits: { fileSize: 25 * 1024 * 1024, files: 500, fields: 20 } });
+const receiveCliPush = (req, res, next) => cliUpload.array("files")(req, res, (error) => {
+  if (!error) return next();
+  const tooLarge = error.code === "LIMIT_FILE_SIZE" || error.code === "LIMIT_FILE_COUNT";
+  return res.status(tooLarge ? 413 : 400).json({ error: tooLarge ? "Push exceeds the configured file limits" : "Invalid push upload", code: tooLarge ? "FILE_TOO_LARGE" : "INVALID_PUSH" });
+});
 
 // Existing write workflows.
 repoRouter.post("/add/:id", requireRepositoryWrite, upload.array("files"), addFiles);
@@ -60,6 +67,10 @@ repoRouter.delete("/:id/collaborators/invitations/:invitationId", requireAuth, r
 
 // Branch, history, and clone/snapshot APIs. Keep these before /:id.
 repoRouter.get("/explore", publicDiscoveryController.explore);
+repoRouter.get("/resolve/:owner/:name", optionalAuth, repositoryCliController.resolve);
+repoRouter.get("/:id/cli/metadata", optionalAuth, requireRepositoryRead, repositoryCliController.metadata);
+repoRouter.get("/:id/cli/fetch", optionalAuth, requireRepositoryRead, repositoryCliController.metadata);
+repoRouter.post("/:id/cli/push", requireAuth, requireRepositoryWrite, receiveCliPush, repositoryCliController.push);
 repoRouter.get("/:id/compare", compareBranches);
 repoRouter.post("/:id/issues", requireAuth, requireRepositoryRead, issueController.create);
 repoRouter.get("/:id/issues", optionalAuth, requireRepositoryRead, issueController.list);

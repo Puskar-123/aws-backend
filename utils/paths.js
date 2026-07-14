@@ -33,7 +33,11 @@ function isSensitiveRepoPath(filePath) {
     || basename.endsWith(".key")
     || basename === "service-account.json"
     || basename === "credentials.json"
-    || basename.endsWith("-credentials.json");
+    || basename.endsWith("-credentials.json")
+    || basename === "id_rsa"
+    || basename === "id_ed25519"
+    || basename.includes("private-key")
+    || basename.includes("private_key");
 }
 
 function isDefaultIgnoredRepoPath(filePath) {
