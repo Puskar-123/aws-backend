@@ -7,14 +7,18 @@ const { branchByName } = require("../services/branchService");
 const {
   canEditPullRequest,
   cleanText,
+  comparisonSnapshot,
   createMergeCommit,
+  historicalComparison,
   httpError,
   idOf,
+  legacyMergeComparison,
+  reviewSummary,
   validPullNumber,
 } = require("../services/pullRequestService");
 const { validateBranchName } = require("../utils/branches");
 
-const safeAuthorFields = "_id username avatarUrl";
+const safeAuthorFields = "_id username name avatarUrl";
 
 function sendError(res, error) {
   if (!error.status) console.error("Pull request operation failed:", error.message);
@@ -26,7 +30,17 @@ function sendError(res, error) {
 function pullObject(document) {
   const value = document?.toObject ? document.toObject() : document;
   if (!value) return null;
-  return { ...value, commentCount: value.comments?.length || 0 };
+  const safeIdentity = (identity) => identity && typeof identity === "object"
+    ? { _id: identity._id || identity.id, username: identity.username || "", name: identity.name || "", avatarUrl: identity.avatarUrl || "" }
+    : null;
+  return {
+    ...value,
+    author: safeIdentity(value.author),
+    mergedBy: safeIdentity(value.mergedBy),
+    comments: (value.comments || []).map((comment) => ({ ...comment, author: safeIdentity(comment.author) })),
+    reviews: (value.reviews || []).map((review) => ({ ...review, reviewer: safeIdentity(review.reviewer) })),
+    commentCount: value.comments?.length || 0,
+  };
 }
 
 function createPullRequestController({
@@ -44,7 +58,8 @@ function createPullRequestController({
     if (!populate) return query;
     return query.populate("author", safeAuthorFields)
       .populate("mergedBy", safeAuthorFields)
-      .populate("comments.author", safeAuthorFields);
+      .populate("comments.author", safeAuthorFields)
+      .populate("reviews.reviewer", safeAuthorFields);
   }
 
   async function create(req, res) {
@@ -61,6 +76,7 @@ function createPullRequestController({
       if (duplicate) throw httpError(409, `An open pull request already exists for these branches (#${duplicate.number})`);
       const comparison = await compareLive(repository, baseBranch, compareBranch);
       if (!comparison.summary.filesChanged) throw httpError(400, "The selected branches have no changes");
+      const storedComparison = comparisonSnapshot(comparison);
       const counter = await RepoModel.findOneAndUpdate(
         { _id: repository._id },
         { $inc: { pullRequestCounter: 1 } },
@@ -77,6 +93,10 @@ function createPullRequestController({
         compareBranch,
         baseHeadAtCreation: branchByName(repository, baseBranch)?.head || null,
         compareHeadAtCreation: branchByName(repository, compareBranch)?.head || null,
+        mergeBaseAtCreation: storedComparison.mergeBase,
+        commitIds: storedComparison.commitIds,
+        changedFilesSummary: storedComparison.summary,
+        changedFilesSnapshot: storedComparison.files,
       });
       return res.status(201).json({ message: "Pull request created successfully", pullRequest: pullObject(pullRequest) });
     } catch (error) { return sendError(res, error); }
@@ -104,12 +124,34 @@ function createPullRequestController({
     try {
       const pullRequest = await findPull(req.repository._id, req.params.number);
       if (!pullRequest) throw httpError(404, "Pull request not found");
-      const comparison = await compareLive(req.repository, pullRequest.baseBranch, pullRequest.compareBranch);
-      const hasChanges = comparison.summary.filesChanged > 0;
-      const hasConflicts = Boolean(comparison.summary.hasConflicts);
+      let comparison;
+      let comparisonSource;
+      let historicalUnavailable = false;
+      if (pullRequest.status === "merged") {
+        comparison = historicalComparison(req.repository, pullRequest, true)
+          || legacyMergeComparison(req.repository, pullRequest);
+        comparisonSource = comparison ? "merge_snapshot" : "unavailable";
+        historicalUnavailable = !comparison;
+      } else {
+        try {
+          comparison = await compareLive(req.repository, pullRequest.baseBranch, pullRequest.compareBranch);
+          comparisonSource = "live";
+        } catch (error) {
+          comparison = historicalComparison(req.repository, pullRequest, false);
+          if (!comparison) throw error;
+          comparisonSource = "creation_snapshot";
+        }
+      }
+      const hasChanges = comparison ? comparison.summary.filesChanged > 0 : false;
+      const hasConflicts = Boolean(comparison?.summary?.hasConflicts);
+      const currentCompareHead = branchByName(req.repository, pullRequest.compareBranch)?.head || null;
+      const reviews = reviewSummary(pullRequest.reviews, currentCompareHead);
       return res.json({
         pullRequest: pullObject(pullRequest),
         comparison,
+        comparisonSource,
+        historicalUnavailable,
+        reviewSummary: reviews,
         branchesChangedSinceCreation: {
           base: String(branchByName(req.repository, pullRequest.baseBranch)?.head || "") !== String(pullRequest.baseHeadAtCreation || ""),
           compare: String(branchByName(req.repository, pullRequest.compareBranch)?.head || "") !== String(pullRequest.compareHeadAtCreation || ""),
@@ -118,13 +160,16 @@ function createPullRequestController({
           canEdit: canEditPullRequest(pullRequest, req.repository, req.user?.id),
           canMerge: Boolean(req.user?.id) && idOf(req.repository.owner) === String(req.user.id),
           canComment: Boolean(req.user?.id),
+          canReviewDecision: Boolean(req.user?.id) && idOf(req.repository.owner) === String(req.user.id),
+          isAuthor: Boolean(req.user?.id) && idOf(pullRequest.author) === String(req.user.id),
         },
         mergeability: {
-          canMerge: pullRequest.status === "open" && hasChanges && !hasConflicts,
+          canMerge: pullRequest.status === "open" && hasChanges && !hasConflicts && !reviews.blocking,
           hasConflicts,
+          blockedByReviews: reviews.blocking,
           reason: pullRequest.status !== "open"
             ? `Pull request is ${pullRequest.status}`
-            : (!hasChanges ? "Branches have no changes" : (hasConflicts ? "Pull request has merge conflicts" : null)),
+            : (!hasChanges ? "Branches have no changes" : (hasConflicts ? "Pull request has merge conflicts" : (reviews.blocking ? "Merge blocked by requested changes" : null))),
         },
       });
     } catch (error) { return sendError(res, error); }
@@ -188,6 +233,10 @@ function createPullRequestController({
       if (comparison.summary.hasConflicts) {
         throw httpError(409, "Pull request has merge conflicts", { conflicts: comparison.files.filter((file) => file.conflict) });
       }
+      const currentCompareHead = branchByName(req.repository, pullRequest.compareBranch)?.head || null;
+      const reviews = reviewSummary(pullRequest.reviews, currentCompareHead);
+      if (reviews.blocking) throw httpError(409, "Merge blocked by requested changes");
+      const finalComparison = comparisonSnapshot(comparison);
       const commit = createMergeCommit(req.repository, pullRequest, comparison, req.user.id);
       await req.repository.save();
       pullRequest.status = "merged";
@@ -195,12 +244,49 @@ function createPullRequestController({
       pullRequest.mergedBy = req.user.id;
       pullRequest.mergedAt = commit.time;
       pullRequest.closedAt = null;
+      pullRequest.finalBaseHead = finalComparison.baseHead;
+      pullRequest.finalCompareHead = finalComparison.compareHead;
+      pullRequest.finalMergeBase = finalComparison.mergeBase;
+      pullRequest.finalCommitIds = finalComparison.commitIds;
+      pullRequest.finalChangedFilesSummary = finalComparison.summary;
+      pullRequest.finalChangedFilesSnapshot = finalComparison.files;
       await pullRequest.save();
       return res.json({ message: "Pull request merged", pullRequest: pullObject(pullRequest), mergeCommit: commit.hash });
     } catch (error) { return sendError(res, error); }
   }
 
-  return { close, comment, create, details, list, merge, reopen, update };
+  async function listReviews(req, res) {
+    try {
+      const pullRequest = await findPull(req.repository._id, req.params.number);
+      if (!pullRequest) throw httpError(404, "Pull request not found");
+      const head = branchByName(req.repository, pullRequest.compareBranch)?.head || null;
+      return res.json({ reviews: pullObject(pullRequest).reviews, reviewSummary: reviewSummary(pullRequest.reviews, head) });
+    } catch (error) { return sendError(res, error); }
+  }
+
+  async function review(req, res) {
+    try {
+      const pullRequest = await findPull(req.repository._id, req.params.number, false);
+      if (!pullRequest) throw httpError(404, "Pull request not found");
+      if (pullRequest.status !== "open") throw httpError(409, "Only an open pull request can be reviewed");
+      const decision = String(req.body?.decision || "");
+      if (!["approved", "changes_requested", "commented"].includes(decision)) throw httpError(400, "Invalid review decision");
+      const body = cleanText(req.body?.body, 5000, "Review");
+      if (["changes_requested", "commented"].includes(decision) && !body) throw httpError(400, "Review body is required for this decision");
+      if (decision === "approved" && idOf(pullRequest.author) === String(req.user.id)) throw httpError(403, "You cannot approve your own pull request");
+      const isOwner = idOf(req.repository.owner) === String(req.user.id);
+      if (["approved", "changes_requested"].includes(decision) && !isOwner) throw httpError(403, "Only the repository owner can submit this review decision");
+      const commitHead = branchByName(req.repository, pullRequest.compareBranch)?.head || null;
+      pullRequest.reviews.push({ reviewer: req.user.id, decision, body, commitHead });
+      await pullRequest.save();
+      await pullRequest.populate("reviews.reviewer", safeAuthorFields);
+      const created = pullRequest.reviews.at(-1);
+      const reviewValue = created?.toObject ? created.toObject() : { ...created };
+      return res.status(201).json({ message: "Review submitted", review: reviewValue, reviewSummary: reviewSummary(pullRequest.reviews, commitHead) });
+    } catch (error) { return sendError(res, error); }
+  }
+
+  return { close, comment, create, details, list, listReviews, merge, reopen, review, update };
 }
 
 module.exports = { createPullRequestController, ...createPullRequestController() };

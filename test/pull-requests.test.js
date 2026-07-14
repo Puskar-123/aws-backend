@@ -3,7 +3,7 @@ const test = require("node:test");
 const mongoose = require("mongoose");
 const PullRequest = require("../models/pullRequestModel");
 const { createPullRequestController } = require("../controllers/pullRequestController");
-const { buildMergedSnapshot, createMergeCommit } = require("../services/pullRequestService");
+const { buildMergedSnapshot, createMergeCommit, reviewSummary } = require("../services/pullRequestService");
 
 const repositoryId = new mongoose.Types.ObjectId();
 const ownerId = new mongoose.Types.ObjectId();
@@ -36,6 +36,9 @@ function repository() {
 
 function comparison(overrides = {}) {
   return {
+    base: { name: "main", head: "c1" },
+    compare: { name: "feature", head: "f1" },
+    mergeBase: "c1",
     files: [{ path: "src/feature.js", status: "added", additions: 1, deletions: 0, conflict: false }],
     commits: [{ hash: "f1", message: "Feature" }],
     summary: { filesChanged: 1, additions: 1, deletions: 0, hasConflicts: false, conflictCount: 0 },
@@ -66,7 +69,9 @@ function pull(overrides = {}) {
     compareBranch: "feature",
     status: "open",
     comments: [],
+    reviews: [],
     async save() { this.saved = true; },
+    async populate() { return this; },
     toObject() { return { ...this, save: undefined, toObject: undefined }; },
     ...overrides,
   };
@@ -119,6 +124,11 @@ test("create pull request validates title, branches, changes, duplicates, and at
   assert.equal(res.statusCode, 201);
   assert.equal(created[0].number, 7);
   assert.equal(created[0].title, "Add feature");
+  assert.equal(created[0].baseHeadAtCreation, "c1");
+  assert.equal(created[0].compareHeadAtCreation, "f1");
+  assert.equal(created[0].mergeBaseAtCreation, "c1");
+  assert.deepEqual(created[0].commitIds, ["f1"]);
+  assert.equal(created[0].changedFilesSnapshot[0].path, "src/feature.js");
   assert.deepEqual(increment[1], { $inc: { pullRequestCounter: 1 } });
 });
 
@@ -177,13 +187,93 @@ test("merge controller rejects conflicts and closed PRs, then merges an open PR"
   assert.equal(res.statusCode, 200);
   assert.equal(document.status, "merged");
   assert.ok(document.mergeCommit);
+  assert.equal(document.finalBaseHead, "c1");
+  assert.equal(document.finalCompareHead, "f1");
+  assert.deepEqual(document.finalCommitIds, ["f1"]);
+  assert.equal(document.finalChangedFilesSnapshot.length, 1);
+});
+
+test("details returns safe identities and a merged historical comparison", async () => {
+  const repo = repository();
+  const user = { _id: authorId, username: "puskar", name: "Puskar Porel", avatarUrl: "" };
+  const document = pull({
+    author: user,
+    mergedBy: user,
+    comments: [{ _id: "comment-1", body: "Nice", author: user, createdAt: new Date() }],
+    status: "merged",
+    finalBaseHead: "c1",
+    finalCompareHead: "f1",
+    finalMergeBase: "c1",
+    finalCommitIds: ["f1"],
+    finalChangedFilesSummary: { filesChanged: 1, additions: 1, deletions: 0 },
+    finalChangedFilesSnapshot: [{ path: "src/feature.js", status: "added", additions: 1, deletions: 0 }],
+  });
+  const controller = createPullRequestController({ PullModel: { findOne: () => query(document) } });
+  const res = response();
+  await controller.details({ repository: repo, params: { number: "1" } }, res);
+  assert.equal(res.body.pullRequest.author.username, "puskar");
+  assert.equal(res.body.pullRequest.comments[0].author.name, "Puskar Porel");
+  assert.equal(res.body.comparisonSource, "merge_snapshot");
+  assert.equal(res.body.comparison.commits.length, 1);
+  assert.equal(res.body.comparison.files.length, 1);
+});
+
+test("review decisions validate permissions and latest decisions control merge blocking", async () => {
+  const repo = repository();
+  const document = pull();
+  const controller = createPullRequestController({ PullModel: { findOne: () => query(document) }, compare: async () => comparison() });
+  let res = response();
+  await controller.review({ repository: repo, user: { id: String(ownerId) }, params: { number: "1" }, body: { decision: "changes_requested", body: "Please fix it" } }, res);
+  assert.equal(res.statusCode, 201);
+  assert.equal(res.body.review.decision, "changes_requested");
+  res = response();
+  await controller.merge({ repository: repo, user: { id: String(ownerId) }, params: { number: "1" } }, res);
+  assert.equal(res.statusCode, 409);
+  assert.equal(res.body.error, "Merge blocked by requested changes");
+  res = response();
+  await controller.review({ repository: repo, user: { id: String(ownerId) }, params: { number: "1" }, body: { decision: "approved", body: "Ready" } }, res);
+  assert.equal(res.statusCode, 201);
+  assert.equal(res.body.reviewSummary.blocking, false);
+  res = response();
+  await controller.merge({ repository: repo, user: { id: String(ownerId) }, params: { number: "1" } }, res);
+  assert.equal(res.statusCode, 200);
+});
+
+test("reviews reject missing bodies, self approval, non-owner decisions, and closed PRs", async () => {
+  const repo = repository();
+  const document = pull();
+  const controller = createPullRequestController({ PullModel: { findOne: () => query(document) } });
+  const submit = async (userId, decision, body) => {
+    const res = response();
+    await controller.review({ repository: repo, user: { id: String(userId) }, params: { number: "1" }, body: { decision, body } }, res);
+    return res;
+  };
+  assert.equal((await submit(ownerId, "commented", "")).statusCode, 400);
+  assert.equal((await submit(authorId, "approved", "")).statusCode, 403);
+  assert.equal((await submit(new mongoose.Types.ObjectId(), "changes_requested", "Fix")).statusCode, 403);
+  assert.equal((await submit(authorId, "commented", "A note")).statusCode, 201);
+  document.status = "closed";
+  assert.equal((await submit(ownerId, "commented", "Late")).statusCode, 409);
+  document.status = "merged";
+  assert.equal((await submit(ownerId, "commented", "Later")).statusCode, 409);
+});
+
+test("review summary uses latest reviewer decision and makes approvals stale after new commits", () => {
+  const reviewer = { _id: ownerId, username: "owner" };
+  const summary = reviewSummary([
+    { _id: "a", reviewer, decision: "changes_requested", commitHead: "f1", createdAt: new Date(1) },
+    { _id: "b", reviewer, decision: "approved", commitHead: "f1", createdAt: new Date(2) },
+  ], "f2");
+  assert.equal(summary.blocking, false);
+  assert.equal(summary.approved, 0);
+  assert.equal(summary.latestByReviewer[0].stale, true);
 });
 
 test("pull request routes are registered before the generic repository route", () => {
   const router = require("../routes/repo.router");
   const paths = router.stack.map((layer) => layer.route?.path).filter(Boolean);
   const generic = paths.indexOf("/:id");
-  for (const path of ["/:id/pulls", "/:id/pulls/:number", "/:id/pulls/:number/comments", "/:id/pulls/:number/merge", "/:id/pulls/:number/close", "/:id/pulls/:number/reopen"]) {
+  for (const path of ["/:id/pulls", "/:id/pulls/:number", "/:id/pulls/:number/comments", "/:id/pulls/:number/reviews", "/:id/pulls/:number/merge", "/:id/pulls/:number/close", "/:id/pulls/:number/reopen"]) {
     assert.ok(paths.includes(path));
     assert.ok(paths.indexOf(path) < generic);
   }

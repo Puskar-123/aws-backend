@@ -1,8 +1,13 @@
 const { v4: uuidv4 } = require("uuid");
 const { branchByName, getBranchSnapshot } = require("./branchService");
+const { normalizeCommit } = require("./branchService");
 const { filesEquivalent, isProtectedDiffPath } = require("./diffService");
 const { findMergeBase, traceAncestry } = require("./compareService");
 const { reconstructSnapshot } = require("./snapshotService");
+const { findCommitDescriptor } = require("./snapshotService");
+
+const MAX_STORED_PATCH_BYTES = 50000;
+const MAX_STORED_DIFF_BYTES = 500000;
 
 function httpError(status, message, extras = {}) {
   return Object.assign(new Error(message), { status, ...extras });
@@ -108,12 +113,115 @@ function createMergeCommit(repository, pullRequest, comparison, userId) {
   return { hash, time, snapshot, legacy: merged.legacy, mergedBy: userId };
 }
 
+function comparisonSnapshot(comparison) {
+  let remaining = MAX_STORED_DIFF_BYTES;
+  const files = (comparison.files || []).map((file) => {
+    const rawPatch = typeof file.patch === "string" ? file.patch : "";
+    const byteLimit = Math.max(0, Math.min(MAX_STORED_PATCH_BYTES, remaining));
+    let patch = rawPatch.slice(0, byteLimit);
+    while (Buffer.byteLength(patch, "utf8") > byteLimit) patch = patch.slice(0, -1);
+    remaining -= Buffer.byteLength(patch, "utf8");
+    return {
+      path: file.path,
+      oldPath: file.oldPath || undefined,
+      status: file.status,
+      additions: file.additions || 0,
+      deletions: file.deletions || 0,
+      isBinary: Boolean(file.isBinary || file.binary),
+      tooLarge: Boolean(file.tooLarge),
+      conflict: Boolean(file.conflict),
+      conflictReason: file.conflictReason || undefined,
+      patch: patch || undefined,
+    };
+  });
+  return {
+    baseHead: comparison.base?.head || null,
+    compareHead: comparison.compare?.head || null,
+    mergeBase: comparison.mergeBase || null,
+    commitIds: (comparison.commits || []).map((commit) => commit.hash || commit.id).filter(Boolean).map(String),
+    summary: { ...comparison.summary },
+    files,
+  };
+}
+
+function historicalComparison(repository, pullRequest, useFinal = false) {
+  const ids = useFinal ? pullRequest.finalCommitIds : pullRequest.commitIds;
+  const summary = useFinal ? pullRequest.finalChangedFilesSummary : pullRequest.changedFilesSummary;
+  const files = useFinal ? pullRequest.finalChangedFilesSnapshot : pullRequest.changedFilesSnapshot;
+  if (!summary) return null;
+  const commits = (ids || []).map((id) => findCommitDescriptor(repository, id))
+    .filter(Boolean)
+    .map((descriptor) => {
+      const commit = normalizeCommit(repository, descriptor);
+      return {
+        id: descriptor.id,
+        hash: commit.hash,
+        message: commit.message,
+        author: commit.author,
+        createdAt: commit.time,
+        parent: commit.parent,
+        branch: commit.branch,
+      };
+    });
+  return {
+    repository: { _id: repository._id, name: repository.name },
+    base: { name: pullRequest.baseBranch, head: useFinal ? pullRequest.finalBaseHead : pullRequest.baseHeadAtCreation },
+    compare: { name: pullRequest.compareBranch, head: useFinal ? pullRequest.finalCompareHead : pullRequest.compareHeadAtCreation },
+    mergeBase: useFinal ? pullRequest.finalMergeBase : pullRequest.mergeBaseAtCreation,
+    ancestryAvailable: null,
+    commits,
+    files: (files || []).map((file) => ({ ...(file.toObject ? file.toObject() : file), hunks: [] })),
+    summary: summary.toObject ? summary.toObject() : { ...summary },
+    isHistorical: true,
+  };
+}
+
+function legacyMergeComparison(repository, pullRequest) {
+  if (!pullRequest.mergeCommit) return null;
+  const descriptor = findCommitDescriptor(repository, pullRequest.mergeCommit);
+  if (!descriptor || !descriptor.commit.summary) return null;
+  const commit = normalizeCommit(repository, descriptor);
+  return {
+    repository: { _id: repository._id, name: repository.name },
+    base: { name: pullRequest.baseBranch, head: pullRequest.mergeCommit },
+    compare: { name: pullRequest.compareBranch, head: commit.parents?.[1] || null },
+    mergeBase: commit.parent || null,
+    ancestryAvailable: null,
+    commits: commit.parents?.[1] ? [{ id: commit.parents[1], hash: commit.parents[1], message: "Merged changes", author: commit.author, createdAt: commit.time, branch: pullRequest.compareBranch }] : [],
+    files: (commit.files || []).map((file) => ({ ...file, additions: 0, deletions: 0, conflict: false, hunks: [] })),
+    summary: commit.summary,
+    isHistorical: true,
+    historicalDataLimited: true,
+  };
+}
+
+function reviewSummary(reviews, currentCompareHead) {
+  const latest = new Map();
+  for (const review of reviews || []) latest.set(idOf(review.reviewer), review);
+  const latestByReviewer = [...latest.values()].map((review) => {
+    const value = review.toObject ? review.toObject() : { ...review };
+    const stale = value.decision === "approved" && Boolean(value.commitHead) && String(value.commitHead) !== String(currentCompareHead || "");
+    return { ...value, stale };
+  });
+  return {
+    approved: latestByReviewer.filter((review) => review.decision === "approved" && !review.stale).length,
+    changesRequested: latestByReviewer.filter((review) => review.decision === "changes_requested").length,
+    commented: latestByReviewer.filter((review) => review.decision === "commented").length,
+    blocking: latestByReviewer.some((review) => review.decision === "changes_requested"),
+    latestByReviewer,
+  };
+}
+
 module.exports = {
   buildMergedSnapshot,
   canEditPullRequest,
   cleanText,
+  comparisonSnapshot,
   createMergeCommit,
+  historicalComparison,
   httpError,
   idOf,
+  legacyMergeComparison,
+  reviewSummary,
   validPullNumber,
 };

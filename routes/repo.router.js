@@ -35,6 +35,8 @@ repoRouter.get("/:id/pulls", optionalAuth, requireRepositoryRead, pullRequestCon
 repoRouter.get("/:id/pulls/:number", optionalAuth, requireRepositoryRead, pullRequestController.details);
 repoRouter.patch("/:id/pulls/:number", requireAuth, requireRepositoryRead, pullRequestController.update);
 repoRouter.post("/:id/pulls/:number/comments", requireAuth, requireRepositoryRead, pullRequestController.comment);
+repoRouter.get("/:id/pulls/:number/reviews", optionalAuth, requireRepositoryRead, pullRequestController.listReviews);
+repoRouter.post("/:id/pulls/:number/reviews", requireAuth, requireRepositoryRead, pullRequestController.review);
 repoRouter.post("/:id/pulls/:number/merge", requireAuth, requireRepositoryWrite, pullRequestController.merge);
 repoRouter.post("/:id/pulls/:number/close", requireAuth, requireRepositoryRead, pullRequestController.close);
 repoRouter.post("/:id/pulls/:number/reopen", requireAuth, requireRepositoryRead, pullRequestController.reopen);
