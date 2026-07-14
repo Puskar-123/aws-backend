@@ -42,6 +42,7 @@ function response() {
 
 async function writeCommit(root, storageId, files) {
   const commitRoot = path.join(root, ".myGit", repositoryId, "commits", storageId);
+  await fsp.mkdir(commitRoot, { recursive: true });
   for (const [filePath, content] of Object.entries(files)) {
     const destination = path.join(commitRoot, ...filePath.split("/"));
     await fsp.mkdir(path.dirname(destination), { recursive: true });
@@ -101,4 +102,54 @@ test("push uploads the first snapshot, skips an immediate repeat, then uploads e
   assert.equal(result.uploadedCount, 1);
   assert.equal(result.skippedCount, 1);
   assert.deepEqual(result.uploaded, ["src/App.jsx"]);
+});
+
+test("feature commits inherit the source snapshot and remove only explicit deletions", async (t) => {
+  const originalCwd = process.cwd();
+  t.after(() => process.chdir(originalCwd));
+  const root = await fsp.mkdtemp(path.join(os.tmpdir(), "codehub-inherit-"));
+  t.after(() => fsp.rm(root, { recursive: true, force: true }));
+  process.chdir(root);
+
+  const mainHash = "c".repeat(64);
+  const featureHash = "d".repeat(64);
+  const inherited = Array.from({ length: 5 }, (_, index) => ({
+    filename: `file${index + 1}.txt`,
+    path: `file${index + 1}.txt`,
+    hash: `${index + 1}`.repeat(64),
+    s3Key: `main/file${index + 1}.txt`,
+  }));
+  repository = {
+    content: inherited,
+    commits: [
+      { _id: "main", hash: mainHash, storageId: "main-storage", parent: null, files: [], snapshot: inherited },
+      { _id: "feature", hash: featureHash, storageId: "feature-storage", parent: mainHash, parents: [mainHash], branch: "feature", files: [{ filename: "new3.txt", path: "new3.txt", status: "added" }], snapshot: [] },
+    ],
+    branches: [{ name: "main", head: mainHash, isDefault: true }, { name: "feature", head: featureHash, isDefault: false }],
+    async save() {},
+  };
+  await writeCommit(root, "feature-storage", { "new3.txt": "new file\n" });
+  let result = await runPush(["new3.txt"], "feature", featureHash);
+  assert.equal(repository.commits[1].snapshot.length, 6);
+  assert.equal(result.deletedCount, 0);
+  assert.deepEqual(repository.commits[1].snapshot.map((file) => file.path).sort(), [...inherited.map((file) => file.path), "new3.txt"].sort());
+
+  const deleteHash = "e".repeat(64);
+  repository.commits.push({
+    _id: "delete",
+    hash: deleteHash,
+    storageId: "delete-storage",
+    parent: featureHash,
+    parents: [featureHash],
+    branch: "feature",
+    files: [{ filename: "file2.txt", path: "file2.txt", status: "deleted" }],
+    deletedFiles: ["file2.txt"],
+    snapshot: [],
+  });
+  repository.branches[1].head = deleteHash;
+  await writeCommit(root, "delete-storage", {});
+  result = await runPush([], "feature", deleteHash);
+  assert.deepEqual(result.deleted, ["file2.txt"]);
+  assert.equal(repository.commits[2].snapshot.length, 5);
+  assert.equal(repository.commits[2].snapshot.some((file) => file.path === "file2.txt"), false);
 });

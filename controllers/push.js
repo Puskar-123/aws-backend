@@ -130,7 +130,9 @@ async function pushRepo(req, res) {
       branchName === defaultBranch.name
     );
     const storedFiles = new Map(previousSnapshot.map((file) => [file.path, file]));
-    const latestFiles = new Map();
+    // A branch commit is an overlay on its parent snapshot. Start with every
+    // inherited file and replace only paths present in the new commit.
+    const latestFiles = new Map(previousSnapshot.map((file) => [file.path, { ...file }]));
     const uploaded = [];
     const skipped = [];
     const warnings = [];
@@ -194,8 +196,13 @@ async function pushRepo(req, res) {
       }
     }
 
-    // Missing paths are deletions in the latest snapshot. Historical S3 data is
-    // retained, while the latest repository snapshot no longer includes them.
+    const explicitlyDeleted = new Set([
+      ...(targetCommit?.deletedFiles || []),
+      ...(targetCommit?.files || []).filter((file) => file.status === "deleted").map((file) => file.path),
+    ].map((filePath) => normalizeRepoPath(String(filePath))));
+    explicitlyDeleted.forEach((filePath) => latestFiles.delete(filePath));
+
+    // Only explicit delete metadata removes inherited paths.
     const deleted = previousSnapshot
       .filter((file) => !latestFiles.has(file.path))
       .map((file) => file.path);

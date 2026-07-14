@@ -28,19 +28,29 @@ async function commitRepo(repoId, message, metadata = {}) {
   if (!repo) throw new Error("Repository not found");
 
   const branch = validateBranchName(metadata.branch || "main");
+  if (!repo.branches?.length) {
+    repo.branches = [{ name: "main", head: null, isDefault: true }];
+  }
+  const existingBranch = repo.branches.find((item) => item.name === branch);
   const repoPath = path.resolve(process.cwd(), ".myGit", repoId);
   const stagedPath = path.join(repoPath, "staging");
   const commitsPath = path.join(repoPath, "commits");
   const storageId = uuidv4();
   const commitDir = path.join(commitsPath, storageId);
   await fs.mkdir(commitDir, { recursive: true });
+  const parentCommit = existingBranch?.head
+    ? repo.commits.find((commit) => commit.hash === existingBranch.head || String(commit._id) === String(existingBranch.head))
+    : null;
+  if (parentCommit?.storageId) {
+    try {
+      await copyRecursive(path.join(commitsPath, parentCommit.storageId), commitDir);
+    } catch (error) {
+      if (error.code !== "ENOENT") throw error;
+    }
+  }
   await copyRecursive(stagedPath, commitDir);
 
   const hash = /^[a-f0-9]{64}$/.test(metadata.hash || "") ? metadata.hash : storageId;
-  if (!repo.branches?.length) {
-    repo.branches = [{ name: "main", head: null, isDefault: true }];
-  }
-  const existingBranch = repo.branches.find((item) => item.name === branch);
   const inferredParent = existingBranch?.head ? safeString(existingBranch.head, "", 128) : "";
   const parents = Array.isArray(metadata.parents)
     ? metadata.parents.map((parent) => safeString(parent, "", 128)).filter(Boolean).slice(0, 2)

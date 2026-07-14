@@ -14,6 +14,8 @@ const { deleteFile, renameFile } = require("../controllers/fileManageController"
 const { listBranches, createBranch, deleteBranch } = require("../controllers/branchController");
 const { getSnapshot, getSnapshotFile } = require("../controllers/snapshotController");
 const { compareBranches } = require("../controllers/compareController");
+const pullRequestController = require("../controllers/pullRequestController");
+const { optionalAuth, requireAuth } = require("../middleware/authMiddleware");
 const { requireRepositoryRead, requireRepositoryWrite } = require("../utils/repositoryAccess");
 
 const repoRouter = express.Router();
@@ -28,6 +30,14 @@ repoRouter.post("/create", repoController.createRepository);
 
 // Branch, history, and clone/snapshot APIs. Keep these before /:id.
 repoRouter.get("/:id/compare", compareBranches);
+repoRouter.post("/:id/pulls", requireAuth, requireRepositoryRead, pullRequestController.create);
+repoRouter.get("/:id/pulls", optionalAuth, requireRepositoryRead, pullRequestController.list);
+repoRouter.get("/:id/pulls/:number", optionalAuth, requireRepositoryRead, pullRequestController.details);
+repoRouter.patch("/:id/pulls/:number", requireAuth, requireRepositoryRead, pullRequestController.update);
+repoRouter.post("/:id/pulls/:number/comments", requireAuth, requireRepositoryRead, pullRequestController.comment);
+repoRouter.post("/:id/pulls/:number/merge", requireAuth, requireRepositoryWrite, pullRequestController.merge);
+repoRouter.post("/:id/pulls/:number/close", requireAuth, requireRepositoryRead, pullRequestController.close);
+repoRouter.post("/:id/pulls/:number/reopen", requireAuth, requireRepositoryRead, pullRequestController.reopen);
 repoRouter.get("/:id/branches", listBranches);
 repoRouter.post("/:id/branches", requireRepositoryWrite, createBranch);
 repoRouter.get("/:id/branches/:branchName/snapshot", getSnapshot);

@@ -109,6 +109,12 @@ const RepositorySchema = new Schema(
     default: "main",
   },
 
+  pullRequestCounter: {
+    type: Number,
+    default: 0,
+    min: 0,
+  },
+
   visibility: {
     type: String,
     enum: ["public", "private"],
