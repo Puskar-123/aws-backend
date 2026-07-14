@@ -43,7 +43,7 @@ repoRouter.get("/all", repoController.getAllRepositories);
 repoRouter.get("/name/:name", repoController.fetchRepositoryByName);
 repoRouter.get("/user/:userID", repoController.fetchRepositoriesForCurrentUser);
 repoRouter.put("/update/:id", repoController.updateRepositoryById);
-repoRouter.delete("/delete/:id", repoController.deleteRepositoryById);
+repoRouter.delete("/delete/:id", requireRepositoryWrite, repoController.deleteRepositoryById);
 repoRouter.patch("/toggle/:id", repoController.toggleVisibilityById);
 // Express 4 wildcard routes preserve complete nested repository paths in req.params[0].
 repoRouter.get("/preview/:id/*", previewFile);

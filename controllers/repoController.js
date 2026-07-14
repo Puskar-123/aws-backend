@@ -283,19 +283,13 @@ async function toggleVisibilityById(req, res) {
 
 // ✅ DELETE
 async function deleteRepositoryById(req, res) {
-  const { id } = req.params;
-
   try {
-    if (!mongoose.Types.ObjectId.isValid(id)) {
-      return res.status(400).json({ error: "Invalid repository ID!" });
-    }
-
-    const repository = await Repository.findByIdAndDelete(id);
-
+    const repository = req.repository;
     if (!repository) {
       return res.status(404).json({ error: "Repository not found!" });
     }
 
+    await repository.deleteOne();
     res.json({ message: "Repository deleted!" });
 
   } catch (err) {
