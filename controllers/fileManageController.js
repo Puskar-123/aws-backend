@@ -2,6 +2,7 @@ const path = require("path");
 const { s3, S3_BUCKET } = require("../config/aws-config");
 const { getAccessibleRepository, sendAccessError } = require("../utils/repositoryAccess");
 const { findRepositoryFile, normalizeRepoPath, requestedRepoPath } = require("../utils/repoPath");
+const { assertCanDirectWrite } = require("../services/branchProtectionService");
 
 function destinationPath(oldPath, newName) {
   if (typeof newName !== "string" || !newName.trim()) {
@@ -30,6 +31,7 @@ async function deleteFile(req, res) {
   try {
     requestedPath = requestedRepoPath(req);
     const repo = req.repository || await getAccessibleRepository(req, req.params.id, { write: true });
+    assertCanDirectWrite(repo, repo.defaultBranch || "main", req.user?.id, "delete_file");
     const file = findRepositoryFile(repo, requestedPath);
     if (!file) return res.status(404).json({ error: "File not found" });
 
@@ -56,6 +58,7 @@ async function renameFile(req, res) {
   try {
     requestedPath = requestedRepoPath(req);
     const repo = req.repository || await getAccessibleRepository(req, req.params.id, { write: true });
+    assertCanDirectWrite(repo, repo.defaultBranch || "main", req.user?.id, "rename_file");
     const file = findRepositoryFile(repo, requestedPath);
     if (!file) return res.status(404).json({ error: "File not found" });
 

@@ -8,6 +8,7 @@ const { safeNotifyRepositoryWatchers } = require("../services/notificationServic
 const { validateBranchName } = require("../utils/branches");
 const { isSensitiveRepoPath, normalizeRepoPath } = require("../utils/repoPath");
 const { detectRepositoryLanguage } = require("../services/repositoryLanguageService");
+const { assertCanDirectWrite } = require("../services/branchProtectionService");
 
 const MAX_EDIT_BYTES = 512 * 1024;
 const EDITABLE_EXTENSIONS = new Set([
@@ -96,6 +97,7 @@ function createFileEditController({
       if (content.length > MAX_EDIT_BYTES) throw editError(413, "This file is too large to edit in the browser.");
       if (hasNullByte(content)) throw editError(415, "Binary files cannot be edited in the browser");
       const value = await context(req);
+      assertCanDirectWrite(value.repository, value.branchName, req.user.id, "browser_edit");
       const currentHead = value.snapshot.branch.head || null;
       const requestedHead = req.body.baseCommit || null;
       if (String(currentHead || "") !== String(requestedHead || "")) {
@@ -173,7 +175,7 @@ function createFileEditController({
       });
     } catch (error) {
       if (!error.status) console.error(`Browser edit failed for repository ${req.params.id}:`, error.message);
-      return res.status(error.status || 500).json({ error: error.status ? error.message : "Unable to update file" });
+      return res.status(error.status || 500).json({ error: error.status ? error.message : "Unable to update file", ...(error.code ? { code: error.code, branch: error.branch, suggestedAction: error.suggestedAction } : {}) });
     }
   }
 

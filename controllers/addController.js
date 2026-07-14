@@ -1,10 +1,14 @@
 const fs = require("fs").promises;
 const path = require("path");
 const { addRepo } = require("./add");
+const { assertCanDirectWrite } = require("../services/branchProtectionService");
+const { validateBranchName } = require("../utils/branches");
 
 async function addFiles(req, res) {
   try {
     const { id: repoId } = req.params;
+    const branch = validateBranchName(req.body?.branch || req.repository.defaultBranch || "main");
+    assertCanDirectWrite(req.repository, branch, req.user?.id, "upload");
 
     // No files uploaded
     if (!req.files || req.files.length === 0) {
@@ -45,8 +49,17 @@ async function addFiles(req, res) {
   } catch (err) {
     console.error("Error staging files:", err);
 
-    res.status(500).json({
-      error: "Failed to add files",
+    for (const file of req.files || []) {
+      try {
+        await fs.unlink(file.path);
+      } catch (cleanupError) {
+        if (cleanupError.code !== "ENOENT") console.error("Unable to delete temp file:", cleanupError);
+      }
+    }
+
+    res.status(err.status || 500).json({
+      error: err.status ? err.message : "Failed to add files",
+      ...(err.code ? { code: err.code, branch: err.branch, suggestedAction: err.suggestedAction } : {}),
     });
   }
 }

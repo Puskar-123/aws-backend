@@ -20,6 +20,7 @@ const socialController = require("../controllers/repositorySocialController");
 const fileEditController = require("../controllers/fileEditController");
 const publicDiscoveryController = require("../controllers/publicDiscoveryController");
 const collaboratorController = require("../controllers/repositoryCollaboratorController");
+const branchProtectionController = require("../controllers/branchProtectionController");
 const { optionalAuth, requireAuth } = require("../middleware/authMiddleware");
 const repositoryAccess = require("../utils/repositoryAccess");
 const { requireRepositoryRead, requireRepositoryWrite } = repositoryAccess;
@@ -44,6 +45,10 @@ repoRouter.get("/:id/watch-status", optionalAuth, requireRepositoryRead, socialC
 repoRouter.post("/:id/fork", requireAuth, requireRepositoryRead, socialController.fork);
 repoRouter.get("/:id/file-editor", requireRepositoryWrite, fileEditController.read);
 repoRouter.put("/:id/file-editor", requireRepositoryWrite, fileEditController.update);
+repoRouter.get("/:id/branch-protection", requireAuth, requireRepositoryPermission("manage_branch_protection"), branchProtectionController.list);
+repoRouter.post("/:id/branch-protection", requireAuth, requireRepositoryPermission("manage_branch_protection"), branchProtectionController.create);
+repoRouter.patch("/:id/branch-protection/:branch", requireAuth, requireRepositoryPermission("manage_branch_protection"), branchProtectionController.update);
+repoRouter.delete("/:id/branch-protection/:branch", requireAuth, requireRepositoryPermission("manage_branch_protection"), branchProtectionController.remove);
 repoRouter.post("/:id/collaborators/invitations", requireAuth, requireRepositoryPermission("manage_collaborators"), collaboratorController.invite);
 repoRouter.get("/:id/collaborators", requireAuth, requireRepositoryRead, collaboratorController.listCollaborators);
 repoRouter.get("/:id/collaborators/invitations", requireAuth, requireRepositoryPermission("manage_collaborators"), collaboratorController.listRepositoryInvitations);

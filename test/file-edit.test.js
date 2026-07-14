@@ -55,6 +55,33 @@ test("owner edits to a fork succeed and remain isolated to that fork", async () 
   assert.equal(res.statusCode, 200); assert.equal(fork.branches[1].head, res.body.commit.hash); assert.equal(fork.forkedFrom, "507f1f77bcf86cd799439099");
 });
 
+test("direct browser edit API blocks a write collaborator on protected main and allows feature", async () => {
+  const repository = makeRepository();
+  const writer = "507f1f77bcf86cd799439088";
+  repository.collaborators = [{ user: writer, role: "write" }];
+  repository.branchProtections = [{ branch: "main", enabled: true, requirePullRequest: true, blockDirectCommits: true, allowOwnerBypass: false, allowMaintainerBypass: false }];
+  const controller = createFileEditController(dependencies(repository));
+  let req = request(repository, { path: "src/app.js", branch: "main", content: "blocked", commitMessage: "Blocked edit", baseCommit: "c1" });
+  req.user.id = writer;
+  let res = response(); await controller.update(req, res);
+  assert.equal(res.statusCode, 403); assert.equal(res.body.code, "BRANCH_PROTECTED"); assert.equal(repository.put, undefined);
+  req = request(repository, { path: "src/app.js", branch: "feature", content: "allowed", commitMessage: "Feature edit", baseCommit: "c1" });
+  req.user.id = writer;
+  res = response(); await controller.update(req, res);
+  assert.equal(res.statusCode, 200);
+});
+
+test("direct browser edit API applies configured owner bypass", async () => {
+  const repository = makeRepository();
+  repository.branchProtections = [{ branch: "main", enabled: true, requirePullRequest: true, blockDirectCommits: true, allowOwnerBypass: false }];
+  const controller = createFileEditController(dependencies(repository));
+  let res = response(); await controller.update(request(repository, { path: "src/app.js", branch: "main", content: "blocked", commitMessage: "Owner edit", baseCommit: "c1" }), res);
+  assert.equal(res.statusCode, 403);
+  repository.branchProtections[0].allowOwnerBypass = true;
+  res = response(); await controller.update(request(repository, { path: "src/app.js", branch: "main", content: "allowed", commitMessage: "Owner bypass", baseCommit: "c1" }), res);
+  assert.equal(res.statusCode, 200);
+});
+
 test("stale base commits are rejected without an S3 write", async () => {
   const repository = makeRepository(); const controller = createFileEditController(dependencies(repository)); const res = response();
   await controller.update(request(repository, { path: "src/app.js", branch: "main", content: "new", commitMessage: "Edit", baseCommit: "older" }), res);

@@ -121,6 +121,22 @@ const RepositorySchema = new Schema(
     default: "main",
   },
 
+  branchProtections: [new Schema({
+    branch: { type: String, required: true, trim: true },
+    enabled: { type: Boolean, default: true },
+    requirePullRequest: { type: Boolean, default: true },
+    requiredApprovals: { type: Number, default: 1, min: 0, max: 10 },
+    blockDirectCommits: { type: Boolean, default: true },
+    blockForcePush: { type: Boolean, default: true },
+    blockDeletion: { type: Boolean, default: true },
+    requireResolvedConversations: { type: Boolean, default: false },
+    dismissStaleApprovals: { type: Boolean, default: false },
+    allowOwnerBypass: { type: Boolean, default: true },
+    allowMaintainerBypass: { type: Boolean, default: false },
+    createdBy: { type: Schema.Types.ObjectId, ref: "User", required: true },
+    updatedBy: { type: Schema.Types.ObjectId, ref: "User", required: true },
+  }, { timestamps: true })],
+
   pullRequestCounter: {
     type: Number,
     default: 0,

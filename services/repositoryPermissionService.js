@@ -2,7 +2,7 @@ const ACTIONS = [
   "view", "download", "create_issue", "comment_issue", "create_pr", "review_pr",
   "merge_pr", "create_branch", "write_files", "delete_files", "rename_files",
   "commit", "delete_branch", "manage_issues", "manage_settings",
-  "manage_collaborators", "delete_repository", "change_visibility",
+  "manage_collaborators", "manage_branch_protection", "delete_repository", "change_visibility",
 ];
 
 const PERMISSIONS = {
@@ -58,6 +58,7 @@ function permissionSummary(repository, userId) {
       canManageIssues: has("manage_issues"),
       canManageSettings: has("manage_settings"),
       canManageCollaborators: has("manage_collaborators"),
+      canManageBranchProtection: has("manage_branch_protection"),
       canDeleteRepository: has("delete_repository"),
       canChangeVisibility: has("change_visibility"),
     },

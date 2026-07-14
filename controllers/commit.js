@@ -5,6 +5,7 @@ const mongoose = require("mongoose");
 const Repository = require("../models/repoModel");
 const { validateBranchName } = require("../utils/branches");
 const { normalizeRepositoryPath } = require("../utils/paths");
+const { assertCanDirectWrite } = require("../services/branchProtectionService");
 
 async function copyRecursive(src, dest) {
   const stat = await fs.stat(src);
@@ -28,6 +29,7 @@ async function commitRepo(repoId, message, metadata = {}) {
   if (!repo) throw new Error("Repository not found");
 
   const branch = validateBranchName(metadata.branch || "main");
+  assertCanDirectWrite(repo, branch, metadata.authenticatedUserId, "commit");
   if (!repo.branches?.length) {
     repo.branches = [{ name: "main", head: null, isDefault: true }];
   }

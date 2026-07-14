@@ -20,6 +20,7 @@ const { validateBranchName } = require("../utils/branches");
 const { getAuthenticatedUserId, requireAuthenticatedUser } = require("../utils/authUser");
 const { safeNotifyRepositoryWatchers } = require("../services/notificationService");
 const { hasRepositoryPermission } = require("../services/repositoryPermissionService");
+const { assertCanMergePullRequest, evaluateMergeProtection } = require("../services/branchProtectionService");
 
 const safeAuthorFields = "_id username name avatarUrl";
 
@@ -27,6 +28,7 @@ function sendError(res, error) {
   if (!error.status) console.error("Pull request operation failed:", error.message);
   const body = { error: error.status ? error.message : "Pull request operation failed" };
   if (error.conflicts) body.conflicts = error.conflicts;
+  for (const field of ["code", "required", "current"]) if (error[field] !== undefined) body[field] = error[field];
   return res.status(error.status || 500).json(body);
 }
 
@@ -159,6 +161,7 @@ function createPullRequestController({
       const hasConflicts = Boolean(comparison?.summary?.hasConflicts);
       const currentCompareHead = branchByName(req.repository, pullRequest.compareBranch)?.head || null;
       const reviews = reviewSummary(pullRequest.reviews, currentCompareHead);
+      const protection = evaluateMergeProtection(req.repository, pullRequest, currentCompareHead);
       const authenticatedUserId = getAuthenticatedUserId(req);
       return res.json({
         pullRequest: pullObject(pullRequest),
@@ -172,18 +175,19 @@ function createPullRequestController({
         },
         permissions: {
           canEdit: canEditPullRequest(pullRequest, req.repository, authenticatedUserId),
-          canMerge: hasRepositoryPermission(req.repository, authenticatedUserId, "merge_pr"),
+          canMerge: hasRepositoryPermission(req.repository, authenticatedUserId, "merge_pr") && protection.requirementsPassed,
           canComment: Boolean(authenticatedUserId),
           canReviewDecision: hasRepositoryPermission(req.repository, authenticatedUserId, "review_pr"),
           isAuthor: Boolean(authenticatedUserId) && idOf(pullRequest.author) === authenticatedUserId,
         },
         mergeability: {
-          canMerge: pullRequest.status === "open" && hasChanges && !hasConflicts && !reviews.blocking,
+          canMerge: pullRequest.status === "open" && hasChanges && !hasConflicts && !reviews.blocking && protection.requirementsPassed,
           hasConflicts,
           blockedByReviews: reviews.blocking,
+          branchProtection: protection,
           reason: pullRequest.status !== "open"
             ? `Pull request is ${pullRequest.status}`
-            : (!hasChanges ? "Branches have no changes" : (hasConflicts ? "Pull request has merge conflicts" : (reviews.blocking ? "Merge blocked by requested changes" : null))),
+            : (!hasChanges ? "Branches have no changes" : (hasConflicts ? "Pull request has merge conflicts" : (reviews.blocking || protection.changesRequested ? "Pull request cannot be merged while changes are requested." : (!protection.requirementsPassed ? `Pull request requires ${protection.requiredApprovals} approval${protection.requiredApprovals === 1 ? "" : "s"} before merging.` : null)))),
         },
       });
     } catch (error) { return sendError(res, error); }
@@ -262,6 +266,7 @@ function createPullRequestController({
       const currentCompareHead = branchByName(req.repository, pullRequest.compareBranch)?.head || null;
       const reviews = reviewSummary(pullRequest.reviews, currentCompareHead);
       if (reviews.blocking) throw httpError(409, "Merge blocked by requested changes");
+      assertCanMergePullRequest(req.repository, pullRequest, currentCompareHead);
       const finalComparison = comparisonSnapshot(comparison);
       const commit = createMergeCommit(req.repository, pullRequest, comparison, String(authenticatedUser._id));
       await req.repository.save();

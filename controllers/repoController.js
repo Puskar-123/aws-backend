@@ -4,6 +4,7 @@ const { s3, S3_BUCKET } = require("../config/aws-config");
 const { isSensitiveRepoPath } = require("../utils/repoPath");
 const { social: repositorySocial } = require("./repositorySocialController");
 const { canViewRepository, permissionSummary, getRepositoryRole, hasRepositoryPermission } = require("../services/repositoryPermissionService");
+const { assertCanDirectWrite, getProtectionSummary } = require("../services/branchProtectionService");
 
 function withoutAccessLists(document) {
   const value = document?.toObject ? document.toObject() : { ...document };
@@ -175,11 +176,26 @@ async function fetchRepositoryById(req, res) {
     response.content = response.content.filter((file) => !protectedFiles.includes(file));
     response.social = await repositorySocial(repository, req.user?.id || null);
     Object.assign(response, permissionSummary(repository, req.user?.id || null));
+    const selectedBranch = req.query?.branch || repository.defaultBranch || "main";
+    response.branchProtection = getProtectionSummary(repository, selectedBranch, req.user?.id || null);
+    response.currentBranch = selectedBranch;
+    const directWriteBlocked = response.branchProtection.protected
+      && (response.branchProtection.blockDirectCommits || response.branchProtection.requirePullRequest)
+      && !response.branchProtection.canBypass;
+    response.permissions.canCommitDirectly = response.permissions.canEditFiles && !directWriteBlocked;
+    response.permissions.canWriteUnprotectedBranches = response.permissions.canEditFiles;
+    if (directWriteBlocked) {
+      response.permissions.canEditFiles = false;
+      response.permissions.canUploadFiles = false;
+      response.permissions.canDeleteFiles = false;
+      response.permissions.canRenameFiles = false;
+    }
     delete response.stars;
     delete response.watchers;
     delete response.forks;
     delete response.forkedBy;
     delete response.collaborators;
+    delete response.branchProtections;
     if (protectedFiles.length) {
       response.warnings = [
         `${protectedFiles.length} protected file(s) are hidden. Previously uploaded secrets must be removed manually.`,
@@ -271,7 +287,15 @@ async function updateRepositoryById(req, res) {
       return res.status(404).json({ error: "Repository not found!" });
     }
 
-    if (content) repository.content.push(content);
+    if (content) {
+      assertCanDirectWrite(
+        repository,
+        repository.defaultBranch || "main",
+        req.user?.id,
+        "repository_content_update"
+      );
+      repository.content.push(content);
+    }
     if (description) {
       if (!hasRepositoryPermission(repository, req.user?.id, "manage_settings")) {
         return res.status(403).json({ error: "You do not have permission to change repository settings" });
@@ -288,7 +312,10 @@ async function updateRepositoryById(req, res) {
 
   } catch (err) {
     console.error("FULL ERROR:", err);
-    res.status(500).json({ error: err.message });
+    res.status(err.status || 500).json({
+      error: err.message,
+      ...(err.code ? { code: err.code, branch: err.branch, suggestedAction: err.suggestedAction } : {}),
+    });
   }
 }
 

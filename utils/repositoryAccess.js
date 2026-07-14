@@ -4,7 +4,7 @@ const Repository = require("../models/repoModel");
 const { canViewRepository, hasRepositoryPermission } = require("../services/repositoryPermissionService");
 
 function getAuthenticatedUserId(req) {
-  const authorization = req.headers.authorization || "";
+  const authorization = req.headers?.authorization || "";
   if (!authorization.startsWith("Bearer ")) return null;
   try {
     return String(jwt.verify(authorization.slice(7), process.env.JWT_SECRET_KEY).id || "");
@@ -43,7 +43,11 @@ async function getAccessibleRepository(req, id, { write = false, action = null, 
 }
 
 function sendAccessError(res, error) {
-  return res.status(error.status || 500).json({ error: error.status ? error.message : "Internal Server Error" });
+  const body = { error: error.status ? error.message : "Internal Server Error" };
+  for (const field of ["code", "branch", "suggestedAction", "required", "current"]) {
+    if (error[field] !== undefined) body[field] = error[field];
+  }
+  return res.status(error.status || 500).json(body);
 }
 
 function repositoryAccessMiddleware(options) {

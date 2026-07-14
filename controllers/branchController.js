@@ -2,6 +2,8 @@ const { getAccessibleRepository, sendAccessError } = require("../utils/repositor
 const { ensureDefaultBranch, validateBranchName } = require("../utils/branches");
 const { getBranchHistory } = require("../services/branchService");
 const { safeNotifyRepositoryWatchers } = require("../services/notificationService");
+const { assertCanDeleteBranch, getProtectionSummary } = require("../services/branchProtectionService");
+const { getAuthenticatedUserId } = require("../utils/repositoryAccess");
 
 function createBranchController({ getRepository = getAccessibleRepository } = {}) {
   async function listBranches(req, res) {
@@ -15,6 +17,7 @@ function createBranchController({ getRepository = getAccessibleRepository } = {}
         createdAt: branch.createdAt || null,
         updatedAt: branch.updatedAt || null,
         commitCount: (getBranchHistory(repo, branch.name, defaultBranch.name) || []).length,
+        protection: getProtectionSummary(repo, branch.name, getAuthenticatedUserId(req)),
       }));
       return res.json({ defaultBranch: defaultBranch.name, branches });
     } catch (error) {
@@ -71,6 +74,7 @@ function createBranchController({ getRepository = getAccessibleRepository } = {}
         : null;
       const branch = repo.branches.find((item) => item.name === name);
       if (!branch) return res.status(404).json({ error: "Branch not found" });
+      assertCanDeleteBranch(repo, name, req.user?.id || getAuthenticatedUserId(req));
       if (branch.name === defaultBranch.name) {
         return res.status(403).json({ error: "Cannot delete the default branch" });
       }

@@ -8,6 +8,7 @@ const { calculateHash } = require("../utils/hash");
 const { ensureDefaultBranch, validateBranchName } = require("../utils/branches");
 const { isDefaultIgnoredRepoPath, isSensitiveRepoPath, normalizeRepoPath } = require("../utils/repoPath");
 const { detectRepositoryLanguage } = require("../services/repositoryLanguageService");
+const { assertCanDirectWrite } = require("../services/branchProtectionService");
 
 const COMMIT_METADATA = "commit.json";
 
@@ -91,6 +92,7 @@ async function pushRepo(req, res) {
 
     const defaultBranch = ensureDefaultBranch(repo);
     const branchName = validateBranchName(req.body?.branch || defaultBranch.name);
+    assertCanDirectWrite(repo, branchName, req.user?.id, "push", { force: Boolean(req.body?.force) });
     let branch = repo.branches.find((item) => item.name === branchName);
     if (!branch) {
       repo.branches.push({ name: branchName, head: null, isDefault: false });
@@ -248,6 +250,7 @@ async function pushRepo(req, res) {
     console.error("Push failed:", err);
     return res.status(err.status || 500).json({
       error: err.status ? err.message : "Push failed",
+      ...(err.code ? { code: err.code, branch: err.branch, suggestedAction: err.suggestedAction } : {}),
       details: process.env.NODE_ENV === "development" ? err.message : undefined,
     });
   }
