@@ -23,7 +23,7 @@ function createBranchController({ getRepository = getAccessibleRepository } = {}
 
   async function createBranch(req, res) {
     try {
-      const repo = await getRepository(req, req.params.id, { write: true });
+      const repo = req.repository || await getRepository(req, req.params.id, { write: true });
       const name = validateBranchName(req.body?.name);
       const defaultBranch = ensureDefaultBranch(repo);
       if (repo.branches.some((branch) => branch.name === name)) {
