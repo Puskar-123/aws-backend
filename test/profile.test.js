@@ -181,7 +181,9 @@ test("profile routes keep reads public and require authentication for updates", 
   const router = require("../routes/user.router");
   const read = router.stack.find((layer) => layer.route?.path === "/profile/:id" && layer.route.methods.get);
   const update = router.stack.find((layer) => layer.route?.path === "/profile/:id" && layer.route.methods.put);
-  assert.equal(read.route.stack.length, 2);
-  assert.equal(update.route.stack.length, 2);
-  assert.equal(update.route.stack[0].handle.name, "requireAuth");
+  assert.equal(read.route.stack.length, 3);
+  assert.equal(update.route.stack.length, 3);
+  assert.equal(read.route.stack[0].handle.name, "noStore");
+  assert.equal(update.route.stack[0].handle.name, "noStore");
+  assert.equal(update.route.stack[1].handle.name, "requireAuth");
 });

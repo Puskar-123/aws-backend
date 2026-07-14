@@ -115,6 +115,12 @@ const RepositorySchema = new Schema(
     min: 0,
   },
 
+  issueCounter: {
+    type: Number,
+    default: 0,
+    min: 0,
+  },
+
   visibility: {
     type: String,
     enum: ["public", "private"],

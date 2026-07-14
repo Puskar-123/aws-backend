@@ -163,6 +163,9 @@ async function followUser(req, res) {
     const users = getCollection();
 
     const { followerId, followingId } = req.body;
+    if (String(req.user?.id || "") !== String(followerId || "")) {
+      return res.status(403).json({ error: "You may only update your own follows" });
+    }
 
     const follower = await users.findOne({ _id: new ObjectId(followerId) });
     const target = await users.findOne({ _id: new ObjectId(followingId) });
@@ -228,6 +231,9 @@ async function isFollowing(req, res) {
 
 async function updateUserProfile(req, res) {
   try {
+    if (String(req.user?.id || "") !== String(req.params.id || "")) {
+      return res.status(403).json({ error: "You may only update your own profile" });
+    }
     await connectClient();
     const users = getCollection();
 
@@ -255,6 +261,9 @@ async function updateUserProfile(req, res) {
 
 async function deleteUserProfile(req, res) {
   try {
+    if (String(req.user?.id || "") !== String(req.params.id || "")) {
+      return res.status(403).json({ error: "You may only delete your own profile" });
+    }
     await connectClient();
     const users = getCollection();
 

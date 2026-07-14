@@ -7,7 +7,6 @@ const { isSensitiveRepoPath } = require("../utils/repoPath");
 async function createRepository(req, res) {
 
   const {
-    owner,
     name,
     issues,
     content,
@@ -26,6 +25,7 @@ async function createRepository(req, res) {
       });
     }
 
+    const owner = req.user?.id;
     if (!owner || !mongoose.Types.ObjectId.isValid(owner)) {
       return res.status(400).json({
         error: "Invalid or missing User ID!",
@@ -226,7 +226,7 @@ async function updateRepositoryById(req, res) {
       return res.status(400).json({ error: "Invalid repository ID!" });
     }
 
-    const repository = await Repository.findById(id);
+    const repository = req.repository || await Repository.findById(id);
 
     if (!repository) {
       return res.status(404).json({ error: "Repository not found!" });
@@ -258,7 +258,7 @@ async function toggleVisibilityById(req, res) {
       return res.status(400).json({ error: "Invalid repository ID!" });
     }
 
-    const repository = await Repository.findById(id);
+    const repository = req.repository || await Repository.findById(id);
 
     if (!repository) {
       return res.status(404).json({ error: "Repository not found!" });

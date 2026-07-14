@@ -2,12 +2,13 @@ const express = require("express");
 const userRouter = require("./user.router");
 const repoRouter = require("./repo.router");
 const issueRouter = require("./issue.router");
+const { noStore } = require("../middleware/noStore");
 
 const mainRouter = express.Router();
 
 // ✅ FIX HERE 👇
 mainRouter.use("/user", userRouter);
-mainRouter.use("/repo", repoRouter);
+mainRouter.use("/repo", noStore, repoRouter);
 mainRouter.use("/issue", issueRouter);
 
 mainRouter.get("/", (req, res) => {

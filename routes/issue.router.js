@@ -1,12 +1,14 @@
 const express = require("express");
-const issueController = require("../controllers/issueController");
+const { requireAuth } = require("../middleware/authMiddleware");
 
 const issueRouter = express.Router();
 
-issueRouter.post("/issue/create", issueController.createIssue);
-issueRouter.put("/issue/update/:id", issueController.updateIssueById);
-issueRouter.delete("/issue/delete/:id", issueController.deleteIssueById);
-issueRouter.get("/issue/all", issueController.getAllIssues);
-issueRouter.get("/issue/:id", issueController.getIssueById);
+// Legacy endpoints never enforced repository authorization and several could
+// not identify a repository. Keep an explicit compatibility response instead
+// of leaving an insecure write surface available.
+issueRouter.use(requireAuth);
+issueRouter.all("*", (_req, res) => res.status(410).json({
+  error: "This legacy issue endpoint has moved to /repo/:id/issues",
+}));
 
 module.exports = issueRouter;
