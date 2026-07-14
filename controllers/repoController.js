@@ -120,7 +120,11 @@ Created using CodeHub 🚀
 
 async function getAllRepositories(req, res) {
     try {
-      const repositories = await Repository.find({})
+      const userId = req.user?.id;
+      const filter = userId
+        ? { $or: [{ visibility: { $ne: "private" } }, { owner: userId }] }
+        : { visibility: { $ne: "private" } };
+      const repositories = await Repository.find(filter)
         .populate("owner")
         .populate("issues");
 
@@ -199,6 +203,9 @@ async function fetchRepositoriesForCurrentUser(req, res) {
   try {
     if (!mongoose.Types.ObjectId.isValid(userID)) {
       return res.status(400).json({ error: "Invalid User ID!" });
+    }
+    if (String(req.user?.id || "") !== String(userID)) {
+      return res.status(403).json({ error: "You may only access your own repository dashboard" });
     }
 
     const repositories = await Repository.find({ owner: userID });

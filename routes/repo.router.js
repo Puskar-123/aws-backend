@@ -68,9 +68,9 @@ repoRouter.get("/:id/snapshot/:branchName", getSnapshot);
 // Legacy history URL remains supported.
 repoRouter.get("/history/:id", getCommitHistory);
 
-repoRouter.get("/all", repoController.getAllRepositories);
+repoRouter.get("/all", optionalAuth, repoController.getAllRepositories);
 repoRouter.get("/name/:name", repoController.fetchRepositoryByName);
-repoRouter.get("/user/:userID", repoController.fetchRepositoriesForCurrentUser);
+repoRouter.get("/user/:userID", requireAuth, repoController.fetchRepositoriesForCurrentUser);
 repoRouter.put("/update/:id", requireRepositoryWrite, repoController.updateRepositoryById);
 repoRouter.delete("/delete/:id", requireRepositoryWrite, repoController.deleteRepositoryById);
 repoRouter.patch("/toggle/:id", requireRepositoryWrite, repoController.toggleVisibilityById);
