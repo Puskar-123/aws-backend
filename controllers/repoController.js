@@ -144,7 +144,7 @@ async function fetchRepositoryById(req, res) {
     }
 
     const repository = await Repository.findById(id)
-      .populate("owner")
+      .populate("owner", "_id username")
       .populate("issues");
 
     if (!repository) {
