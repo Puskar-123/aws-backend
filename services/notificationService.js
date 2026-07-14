@@ -34,7 +34,8 @@ async function notifyRepositoryWatchers(repository, input, {
   let recipients = [...new Set((repository?.watchers || []).map(idOf).filter((id) => id && id !== actor))];
   if (repository?.visibility === "private") {
     const owner = idOf(repository.owner);
-    recipients = recipients.filter((id) => id === owner);
+    const allowed = new Set([owner, ...(repository.collaborators || []).map((item) => idOf(item.user))]);
+    recipients = recipients.filter((id) => allowed.has(id));
   }
   if (!recipients.length) return [];
   try {

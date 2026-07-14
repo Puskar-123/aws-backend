@@ -33,7 +33,7 @@ function createRepositorySocialController({ RepoModel = Repository } = {}) {
       if (await RepoModel.findOne({ owner: userId, forkedFrom: source._id })) return res.status(409).json({ error: "You already forked this repository." });
       let name = source.name; let suffix = 0;
       while (await RepoModel.exists({ name })) { suffix += 1; name = `${source.name}-fork${suffix > 1 ? `-${suffix}` : ""}`; }
-      const forked = await RepoModel.create({ name, owner: userId, description: source.description || "", visibility: source.visibility, content: cleanFiles(source.content), commits: cloneCommits(source.commits), branches: (source.branches || []).map((b) => ({ ...(b.toObject ? b.toObject() : b), _id: undefined })), defaultBranch: source.defaultBranch || "main", forkedFrom: source._id, forkedBy: userId, forkDepth: Number(source.forkDepth || 0) + 1 });
+      const forked = await RepoModel.create({ name, owner: userId, description: source.description || "", language: source.language || "", visibility: source.visibility, content: cleanFiles(source.content), commits: cloneCommits(source.commits), branches: (source.branches || []).map((b) => ({ ...(b.toObject ? b.toObject() : b), _id: undefined })), defaultBranch: source.defaultBranch || "main", forkedFrom: source._id, forkedBy: userId, forkDepth: Number(source.forkDepth || 0) + 1 });
       await RepoModel.findByIdAndUpdate(source._id, { $addToSet: { forks: forked._id } });
       await safeNotifyRepositoryWatchers(source, {
         actor: userId,

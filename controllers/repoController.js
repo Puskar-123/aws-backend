@@ -3,6 +3,17 @@ const Repository = require("../models/repoModel");
 const { s3, S3_BUCKET } = require("../config/aws-config");
 const { isSensitiveRepoPath } = require("../utils/repoPath");
 const { social: repositorySocial } = require("./repositorySocialController");
+const { canViewRepository, permissionSummary, getRepositoryRole, hasRepositoryPermission } = require("../services/repositoryPermissionService");
+
+function withoutAccessLists(document) {
+  const value = document?.toObject ? document.toObject() : { ...document };
+  delete value.collaborators;
+  delete value.stars;
+  delete value.watchers;
+  delete value.forks;
+  delete value.forkedBy;
+  return value;
+}
 
 // ✅ CREATE REPOSITORY
 async function createRepository(req, res) {
@@ -123,13 +134,13 @@ async function getAllRepositories(req, res) {
     try {
       const userId = req.user?.id;
       const filter = userId
-        ? { $or: [{ visibility: { $ne: "private" } }, { owner: userId }] }
+        ? { $or: [{ visibility: { $ne: "private" } }, { owner: userId }, { "collaborators.user": userId }] }
         : { visibility: { $ne: "private" } };
       const repositories = await Repository.find(filter)
-        .populate("owner")
+        .populate("owner", "_id username name avatarUrl")
         .populate("issues");
 
-      res.json(repositories);
+      res.json(repositories.map(withoutAccessLists));
 
     } catch (err) {
       console.error("FULL ERROR:", err);
@@ -163,10 +174,12 @@ async function fetchRepositoryById(req, res) {
     });
     response.content = response.content.filter((file) => !protectedFiles.includes(file));
     response.social = await repositorySocial(repository, req.user?.id || null);
+    Object.assign(response, permissionSummary(repository, req.user?.id || null));
     delete response.stars;
     delete response.watchers;
     delete response.forks;
     delete response.forkedBy;
+    delete response.collaborators;
     if (protectedFiles.length) {
       response.warnings = [
         `${protectedFiles.length} protected file(s) are hidden. Previously uploaded secrets must be removed manually.`,
@@ -187,14 +200,18 @@ async function fetchRepositoryByName(req, res) {
 
   try {
     const repository = await Repository.findOne({ name })
-      .populate("owner")
+      .populate("owner", "_id username avatarUrl")
       .populate("issues");
 
     if (!repository) {
       return res.status(404).json({ error: "Repository not found!" });
     }
 
-    res.json(repository);
+    if (!canViewRepository(repository, req.user?.id || null)) {
+      return res.status(req.user?.id ? 403 : 401).json({ error: req.user?.id ? "You do not have access to this repository" : "Authentication required" });
+    }
+
+    res.json(withoutAccessLists(repository));
 
   } catch (err) {
     console.error("FULL ERROR:", err);
@@ -215,13 +232,21 @@ async function fetchRepositoriesForCurrentUser(req, res) {
       return res.status(403).json({ error: "You may only access your own repository dashboard" });
     }
 
-    const repositories = await Repository.find({ owner: userID });
+    const fields = "_id name description visibility language owner collaborators updatedAt createdAt";
+    const [owned, shared] = await Promise.all([
+      Repository.find({ owner: userID }).select(fields).populate("owner", "_id username name avatarUrl").lean(),
+      Repository.find({ "collaborators.user": userID }).select(fields).populate("owner", "_id username name avatarUrl").lean(),
+    ]);
+    const myRepositories = owned.map(({ collaborators, ...repository }) => repository);
+    const sharedRepositories = shared
+      .filter((repository) => String(repository.owner?._id || repository.owner) !== String(userID))
+      .map((repository) => {
+        const currentUserRole = getRepositoryRole(repository, userID);
+        const { collaborators, ...safe } = repository;
+        return { ...safe, currentUserRole };
+      });
 
-    if (!repositories.length) {
-      return res.status(404).json({ error: "No repositories found!" });
-    }
-
-    res.json({ repositories });
+    res.json({ repositories: myRepositories, myRepositories, sharedRepositories });
 
   } catch (err) {
     console.error("FULL ERROR:", err);
@@ -247,13 +272,18 @@ async function updateRepositoryById(req, res) {
     }
 
     if (content) repository.content.push(content);
-    if (description) repository.description = description;
+    if (description) {
+      if (!hasRepositoryPermission(repository, req.user?.id, "manage_settings")) {
+        return res.status(403).json({ error: "You do not have permission to change repository settings" });
+      }
+      repository.description = description;
+    }
 
     const updatedRepository = await repository.save();
 
     res.json({
       message: "Repository updated!",
-      repository: updatedRepository,
+      repository: withoutAccessLists(updatedRepository),
     });
 
   } catch (err) {
@@ -285,7 +315,7 @@ async function toggleVisibilityById(req, res) {
 
     res.json({
       message: "Visibility updated!",
-      repository: updatedRepository,
+      repository: withoutAccessLists(updatedRepository),
     });
 
   } catch (err) {
@@ -300,6 +330,11 @@ async function deleteRepositoryById(req, res) {
   try {
     const repository = req.repository;
     if (!repository) {
+      return res.status(404).json({ error: "Repository not found!" });
+    }
+
+    const ownerId = String(repository.owner?._id || repository.owner || "");
+    if (repository.visibility === "private" && String(req.user?.id || "") !== ownerId) {
       return res.status(404).json({ error: "Repository not found!" });
     }
 

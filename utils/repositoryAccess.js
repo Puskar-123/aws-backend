@@ -1,6 +1,7 @@
 const jwt = require("jsonwebtoken");
 const mongoose = require("mongoose");
 const Repository = require("../models/repoModel");
+const { canViewRepository, hasRepositoryPermission } = require("../services/repositoryPermissionService");
 
 function getAuthenticatedUserId(req) {
   const authorization = req.headers.authorization || "";
@@ -12,7 +13,7 @@ function getAuthenticatedUserId(req) {
   }
 }
 
-async function getAccessibleRepository(req, id, { write = false, populateOwner = false } = {}) {
+async function getAccessibleRepository(req, id, { write = false, action = null, populateOwner = false } = {}) {
   if (!mongoose.Types.ObjectId.isValid(id)) {
     const error = new Error("Invalid repository ID");
     error.status = 400;
@@ -20,7 +21,7 @@ async function getAccessibleRepository(req, id, { write = false, populateOwner =
   }
 
   let query = Repository.findById(id);
-  if (populateOwner) query = query.populate("owner", "username email");
+  if (populateOwner) query = query.populate("owner", "_id username name avatarUrl");
   const repository = await query;
   if (!repository) {
     const error = new Error("Repository not found");
@@ -29,9 +30,11 @@ async function getAccessibleRepository(req, id, { write = false, populateOwner =
   }
 
   const userId = getAuthenticatedUserId(req);
-  const ownerId = String(repository.owner?._id || repository.owner || "");
-  const isOwner = Boolean(userId && userId === ownerId);
-  if ((write && !isOwner) || (repository.visibility === "private" && !isOwner)) {
+  const requiredAction = action || (write ? "write_files" : null);
+  const permitted = requiredAction
+    ? hasRepositoryPermission(repository, userId, requiredAction)
+    : canViewRepository(repository, userId);
+  if (!permitted) {
     const error = new Error(userId ? "You do not have access to this repository" : "Authentication required");
     error.status = userId ? 403 : 401;
     throw error;
@@ -58,6 +61,7 @@ function repositoryAccessMiddleware(options) {
 
 const requireRepositoryRead = repositoryAccessMiddleware({ write: false });
 const requireRepositoryWrite = repositoryAccessMiddleware({ write: true });
+const requireRepositoryPermission = (action) => repositoryAccessMiddleware({ action });
 
 module.exports = {
   getAccessibleRepository,
@@ -65,4 +69,5 @@ module.exports = {
   getAuthenticatedUserId,
   requireRepositoryRead,
   requireRepositoryWrite,
+  requireRepositoryPermission,
 };

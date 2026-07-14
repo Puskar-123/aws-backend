@@ -7,6 +7,7 @@ const Repository = require("../models/repoModel");
 const { calculateHash } = require("../utils/hash");
 const { ensureDefaultBranch, validateBranchName } = require("../utils/branches");
 const { isDefaultIgnoredRepoPath, isSensitiveRepoPath, normalizeRepoPath } = require("../utils/repoPath");
+const { detectRepositoryLanguage } = require("../services/repositoryLanguageService");
 
 const COMMIT_METADATA = "commit.json";
 
@@ -227,6 +228,7 @@ async function pushRepo(req, res) {
     }
     if (req.body?.head) branch.head = req.body.head;
     if (branchName === defaultBranch.name) repo.content = [...latestFiles.values()];
+    if (branchName === defaultBranch.name) repo.language = detectRepositoryLanguage([...latestFiles.values()]);
     // Existing commit history must not be rebuilt or overwritten by push.
     await repo.save();
 

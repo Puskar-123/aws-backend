@@ -3,14 +3,17 @@ const Notification = require("../models/notificationModel");
 const { markAllAsRead, markAsRead } = require("../services/notificationService");
 
 const identityFields = "_id username name avatarUrl";
-const repositoryFields = "_id name visibility owner";
+const repositoryFields = "_id name visibility owner collaborators";
 const idOf = (value) => String(value?._id || value?.id || value || "");
 
 function safeNotification(document, recipientId) {
   const value = document?.toObject ? document.toObject() : document;
   if (!value) return null;
   const repository = value.repository;
-  if (repository?.visibility === "private" && idOf(repository.owner) !== String(recipientId)) return null;
+  const accessNotification = ["repository_invitation", "collaborator_removed", "collaborator_role_changed"].includes(value.type);
+  const privateAccess = idOf(repository?.owner) === String(recipientId)
+    || (repository?.collaborators || []).some((item) => idOf(item.user) === String(recipientId));
+  if (repository?.visibility === "private" && !privateAccess && !accessNotification) return null;
   return {
     _id: value._id,
     type: value.type,

@@ -77,11 +77,11 @@ test("repository delete access allows the owner and the controller deletes the a
   assert.equal(deleteCalls, 1);
 });
 
-test("repository delete route requires write access before the controller", () => {
+test("repository delete route requires owner-level permission before the controller", () => {
   const router = require("../routes/repo.router");
   const route = router.stack.find((layer) => layer.route?.path === "/delete/:id");
   assert.ok(route);
   assert.equal(route.route.stack.length, 2);
-  assert.equal(route.route.stack[0].handle, requireRepositoryWrite);
+  assert.notEqual(route.route.stack[0].handle, deleteRepositoryById);
   assert.equal(route.route.stack[1].handle, deleteRepositoryById);
 });

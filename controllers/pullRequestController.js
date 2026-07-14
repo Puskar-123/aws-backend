@@ -19,6 +19,7 @@ const {
 const { validateBranchName } = require("../utils/branches");
 const { getAuthenticatedUserId, requireAuthenticatedUser } = require("../utils/authUser");
 const { safeNotifyRepositoryWatchers } = require("../services/notificationService");
+const { hasRepositoryPermission } = require("../services/repositoryPermissionService");
 
 const safeAuthorFields = "_id username name avatarUrl";
 
@@ -171,9 +172,9 @@ function createPullRequestController({
         },
         permissions: {
           canEdit: canEditPullRequest(pullRequest, req.repository, authenticatedUserId),
-          canMerge: Boolean(authenticatedUserId) && idOf(req.repository.owner) === authenticatedUserId,
+          canMerge: hasRepositoryPermission(req.repository, authenticatedUserId, "merge_pr"),
           canComment: Boolean(authenticatedUserId),
-          canReviewDecision: Boolean(authenticatedUserId) && idOf(req.repository.owner) === authenticatedUserId,
+          canReviewDecision: hasRepositoryPermission(req.repository, authenticatedUserId, "review_pr"),
           isAuthor: Boolean(authenticatedUserId) && idOf(pullRequest.author) === authenticatedUserId,
         },
         mergeability: {
@@ -308,8 +309,10 @@ function createPullRequestController({
       const body = cleanText(req.body?.body, 5000, "Review");
       if (["changes_requested", "commented"].includes(decision) && !body) throw httpError(400, "Review body is required for this decision");
       if (decision === "approved" && idOf(pullRequest.author) === String(authenticatedUser._id)) throw httpError(403, "You cannot approve your own pull request");
-      const isOwner = idOf(req.repository.owner) === String(authenticatedUser._id);
-      if (["approved", "changes_requested"].includes(decision) && !isOwner) throw httpError(403, "Only the repository owner can submit this review decision");
+      if (["approved", "changes_requested"].includes(decision)
+        && !hasRepositoryPermission(req.repository, authenticatedUser._id, "review_pr")) {
+        throw httpError(403, "You do not have permission to submit this review decision");
+      }
       const commitHead = branchByName(req.repository, pullRequest.compareBranch)?.head || null;
       const now = new Date();
       pullRequest.reviews.push({ reviewer: authenticatedUser._id, decision, body, commitHead, createdAt: now, updatedAt: now });

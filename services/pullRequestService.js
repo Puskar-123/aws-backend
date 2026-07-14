@@ -5,6 +5,7 @@ const { filesEquivalent, isProtectedDiffPath } = require("./diffService");
 const { findMergeBase, traceAncestry } = require("./compareService");
 const { reconstructSnapshot } = require("./snapshotService");
 const { findCommitDescriptor } = require("./snapshotService");
+const { hasRepositoryPermission } = require("./repositoryPermissionService");
 
 const MAX_STORED_PATCH_BYTES = 50000;
 const MAX_STORED_DIFF_BYTES = 500000;
@@ -31,7 +32,8 @@ function idOf(value) {
 }
 
 function canEditPullRequest(pullRequest, repository, userId) {
-  return Boolean(userId) && [idOf(pullRequest.author), idOf(repository.owner)].includes(String(userId));
+  return Boolean(userId) && (idOf(pullRequest.author) === String(userId)
+    || hasRepositoryPermission(repository, userId, "merge_pr"));
 }
 
 function snapshotMap(result, includeProtected = false) {

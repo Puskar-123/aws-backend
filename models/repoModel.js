@@ -13,6 +13,12 @@ const RepositorySchema = new Schema(
     type: String,
   },
 
+  language: {
+    type: String,
+    default: "",
+    maxlength: 40,
+  },
+
   // Latest files
   content: [
     {
@@ -146,6 +152,14 @@ const RepositorySchema = new Schema(
     required: true,
   },
 
+  collaborators: [{
+    _id: false,
+    user: { type: Schema.Types.ObjectId, ref: "User", required: true },
+    role: { type: String, enum: ["maintainer", "write", "read"], required: true },
+    addedBy: { type: Schema.Types.ObjectId, ref: "User", required: true },
+    addedAt: { type: Date, default: Date.now },
+  }],
+
   issues: [
     {
       type: Schema.Types.ObjectId,
@@ -164,5 +178,8 @@ RepositorySchema.index({ owner: 1, forkedFrom: 1 }, {
 });
 RepositorySchema.index({ stars: 1 });
 RepositorySchema.index({ watchers: 1 });
+RepositorySchema.index({ visibility: 1, updatedAt: -1 });
+RepositorySchema.index({ visibility: 1, name: 1 });
+RepositorySchema.index({ "collaborators.user": 1 });
 
 module.exports = mongoose.model("Repository", RepositorySchema);

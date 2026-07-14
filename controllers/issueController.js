@@ -6,6 +6,7 @@ const User = require("../models/userModel");
 const { getAccessibleRepository } = require("../utils/repositoryAccess");
 const { getAuthenticatedUserId, requireAuthenticatedUser } = require("../utils/authUser");
 const { safeNotifyRepositoryWatchers } = require("../services/notificationService");
+const { hasRepositoryPermission } = require("../services/repositoryPermissionService");
 
 const identityFields = "_id username name avatarUrl";
 const priorities = new Set(["low", "medium", "high", "critical", "none"]);
@@ -62,7 +63,8 @@ function issueObject(document) {
 }
 
 function canEdit(issue, repository, userId) {
-  return Boolean(userId) && [idOf(issue.author || issue.owner || issue.user), idOf(repository.owner)].includes(String(userId));
+  return Boolean(userId) && (idOf(issue.author || issue.owner || issue.user) === String(userId)
+    || hasRepositoryPermission(repository, userId, "manage_issues"));
 }
 
 function issueLookup(repositoryId, identifier) {
@@ -148,7 +150,7 @@ function createIssueController({
       const issue = await findIssue(req.repository._id, req.params.number);
       if (!issue) throw issueError(404, "Issue not found");
       const userId = getAuthenticatedUserId(req);
-      return res.json({ issue: issueObject(issue), permissions: { canEdit: canEdit(issue, req.repository, userId), canManage: Boolean(userId) && idOf(req.repository.owner) === String(userId), canComment: Boolean(userId) } });
+      return res.json({ issue: issueObject(issue), permissions: { canEdit: canEdit(issue, req.repository, userId), canManage: hasRepositoryPermission(req.repository, userId, "manage_issues"), canComment: Boolean(userId) } });
     } catch (error) { return sendError(res, error); }
   }
 
@@ -290,7 +292,7 @@ function createIssueController({
 
   function assertOwner(req) {
     const userId = getAuthenticatedUserId(req);
-    if (!userId || idOf(req.repository.owner) !== userId) throw issueError(403, "Only the repository owner can manage this issue field");
+    if (!hasRepositoryPermission(req.repository, userId, "manage_issues")) throw issueError(403, "You do not have permission to manage this issue field");
   }
 
   return { addAssignee, addLabel, close, comment, create, details, linkPullRequest, list, removeAssignee, removeLabel, reopen, update };

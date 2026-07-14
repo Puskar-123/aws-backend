@@ -18,8 +18,13 @@ const pullRequestController = require("../controllers/pullRequestController");
 const issueController = require("../controllers/issueController");
 const socialController = require("../controllers/repositorySocialController");
 const fileEditController = require("../controllers/fileEditController");
+const publicDiscoveryController = require("../controllers/publicDiscoveryController");
+const collaboratorController = require("../controllers/repositoryCollaboratorController");
 const { optionalAuth, requireAuth } = require("../middleware/authMiddleware");
-const { requireRepositoryRead, requireRepositoryWrite } = require("../utils/repositoryAccess");
+const repositoryAccess = require("../utils/repositoryAccess");
+const { requireRepositoryRead, requireRepositoryWrite } = repositoryAccess;
+const requireRepositoryPermission = repositoryAccess.requireRepositoryPermission
+  || (() => requireRepositoryWrite);
 
 const repoRouter = express.Router();
 const upload = multer({ dest: "uploads/" });
@@ -39,8 +44,15 @@ repoRouter.get("/:id/watch-status", optionalAuth, requireRepositoryRead, socialC
 repoRouter.post("/:id/fork", requireAuth, requireRepositoryRead, socialController.fork);
 repoRouter.get("/:id/file-editor", requireRepositoryWrite, fileEditController.read);
 repoRouter.put("/:id/file-editor", requireRepositoryWrite, fileEditController.update);
+repoRouter.post("/:id/collaborators/invitations", requireAuth, requireRepositoryPermission("manage_collaborators"), collaboratorController.invite);
+repoRouter.get("/:id/collaborators", requireAuth, requireRepositoryRead, collaboratorController.listCollaborators);
+repoRouter.get("/:id/collaborators/invitations", requireAuth, requireRepositoryPermission("manage_collaborators"), collaboratorController.listRepositoryInvitations);
+repoRouter.patch("/:id/collaborators/:userId", requireAuth, requireRepositoryPermission("manage_collaborators"), collaboratorController.updateRole);
+repoRouter.delete("/:id/collaborators/:userId", requireAuth, requireRepositoryPermission("manage_collaborators"), collaboratorController.remove);
+repoRouter.delete("/:id/collaborators/invitations/:invitationId", requireAuth, requireRepositoryPermission("manage_collaborators"), collaboratorController.cancel);
 
 // Branch, history, and clone/snapshot APIs. Keep these before /:id.
+repoRouter.get("/explore", publicDiscoveryController.explore);
 repoRouter.get("/:id/compare", compareBranches);
 repoRouter.post("/:id/issues", requireAuth, requireRepositoryRead, issueController.create);
 repoRouter.get("/:id/issues", optionalAuth, requireRepositoryRead, issueController.list);
@@ -61,7 +73,7 @@ repoRouter.patch("/:id/pulls/:number", requireAuth, requireRepositoryRead, pullR
 repoRouter.post("/:id/pulls/:number/comments", requireAuth, requireRepositoryRead, pullRequestController.comment);
 repoRouter.get("/:id/pulls/:number/reviews", optionalAuth, requireRepositoryRead, pullRequestController.listReviews);
 repoRouter.post("/:id/pulls/:number/reviews", requireAuth, requireRepositoryRead, pullRequestController.review);
-repoRouter.post("/:id/pulls/:number/merge", requireAuth, requireRepositoryWrite, pullRequestController.merge);
+repoRouter.post("/:id/pulls/:number/merge", requireAuth, requireRepositoryPermission("merge_pr"), pullRequestController.merge);
 repoRouter.post("/:id/pulls/:number/close", requireAuth, requireRepositoryRead, pullRequestController.close);
 repoRouter.post("/:id/pulls/:number/reopen", requireAuth, requireRepositoryRead, pullRequestController.reopen);
 repoRouter.get("/:id/branches", listBranches);
@@ -80,11 +92,11 @@ repoRouter.get("/:id/snapshot/:branchName", getSnapshot);
 repoRouter.get("/history/:id", getCommitHistory);
 
 repoRouter.get("/all", optionalAuth, repoController.getAllRepositories);
-repoRouter.get("/name/:name", repoController.fetchRepositoryByName);
+repoRouter.get("/name/:name", optionalAuth, repoController.fetchRepositoryByName);
 repoRouter.get("/user/:userID", requireAuth, repoController.fetchRepositoriesForCurrentUser);
 repoRouter.put("/update/:id", requireRepositoryWrite, repoController.updateRepositoryById);
-repoRouter.delete("/delete/:id", requireRepositoryWrite, repoController.deleteRepositoryById);
-repoRouter.patch("/toggle/:id", requireRepositoryWrite, repoController.toggleVisibilityById);
+repoRouter.delete("/delete/:id", requireRepositoryPermission("delete_repository"), repoController.deleteRepositoryById);
+repoRouter.patch("/toggle/:id", requireRepositoryPermission("change_visibility"), repoController.toggleVisibilityById);
 // Express 4 wildcard routes preserve complete nested repository paths in req.params[0].
 repoRouter.get("/preview/:id/*", previewFile);
 repoRouter.get("/file/:id/*", getFile);

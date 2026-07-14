@@ -5,6 +5,8 @@ const TYPES = [
   "commit", "branch_created", "pull_request_opened", "pull_request_commented",
   "pull_request_reviewed", "pull_request_merged", "issue_opened", "issue_commented",
   "issue_closed", "issue_reopened", "repository_forked", "repository_starred", "mention",
+  "repository_invitation", "repository_invitation_accepted", "repository_invitation_declined",
+  "collaborator_removed", "collaborator_role_changed",
 ];
 
 const NotificationSchema = new Schema({

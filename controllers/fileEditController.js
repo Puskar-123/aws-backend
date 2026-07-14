@@ -7,6 +7,7 @@ const { getBranchSnapshot } = require("../services/branchService");
 const { safeNotifyRepositoryWatchers } = require("../services/notificationService");
 const { validateBranchName } = require("../utils/branches");
 const { isSensitiveRepoPath, normalizeRepoPath } = require("../utils/repoPath");
+const { detectRepositoryLanguage } = require("../services/repositoryLanguageService");
 
 const MAX_EDIT_BYTES = 512 * 1024;
 const EDITABLE_EXTENSIONS = new Set([
@@ -133,7 +134,10 @@ function createFileEditController({
         $push: { commits: commitDocument },
         $set: { "branches.$[editedBranch].head": commitHash },
       };
-      if (branch.isDefault || value.repository.defaultBranch === branch.name) updates.$set.content = nextSnapshot;
+      if (branch.isDefault || value.repository.defaultBranch === branch.name) {
+        updates.$set.content = nextSnapshot;
+        updates.$set.language = detectRepositoryLanguage(nextSnapshot);
+      }
       let savedRepository;
       if (typeof RepoModel.findOneAndUpdate === "function") {
         savedRepository = await RepoModel.findOneAndUpdate(
@@ -145,7 +149,10 @@ function createFileEditController({
       } else {
         value.repository.commits.push(commitDocument);
         branch.head = commitHash;
-        if (branch.isDefault || value.repository.defaultBranch === branch.name) value.repository.content = nextSnapshot;
+        if (branch.isDefault || value.repository.defaultBranch === branch.name) {
+          value.repository.content = nextSnapshot;
+          value.repository.language = detectRepositoryLanguage(nextSnapshot);
+        }
         await value.repository.save();
         savedRepository = value.repository;
       }

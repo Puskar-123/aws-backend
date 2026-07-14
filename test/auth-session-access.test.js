@@ -69,5 +69,9 @@ test("repository discovery excludes other users' private repositories", async (t
   assert.deepEqual(filters[0], { visibility: { $ne: "private" } });
   const userId = String(new mongoose.Types.ObjectId());
   res = response(); await repoController.getAllRepositories({ user: { id: userId } }, res);
-  assert.deepEqual(filters[1], { $or: [{ visibility: { $ne: "private" } }, { owner: userId }] });
+  assert.deepEqual(filters[1], { $or: [
+    { visibility: { $ne: "private" } },
+    { owner: userId },
+    { "collaborators.user": userId },
+  ] });
 });
