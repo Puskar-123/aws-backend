@@ -17,6 +17,40 @@ const ReviewSchema = new Schema({
   updatedAt: { type: Date, default: Date.now },
 }, { _id: true });
 
+const RequestedReviewerSchema = new Schema({
+  user: { type: Schema.Types.ObjectId, ref: "User", required: true },
+  requestedBy: { type: Schema.Types.ObjectId, ref: "User", required: true },
+  requestedAt: { type: Date, default: Date.now },
+  status: { type: String, enum: ["requested", "reviewed", "removed"], default: "requested" },
+}, { _id: true });
+
+const ReviewCommentSchema = new Schema({
+  author: { type: Schema.Types.ObjectId, ref: "User", required: true },
+  body: { type: String, required: true, trim: true, maxlength: 5000 },
+  editedAt: { type: Date, default: null },
+  deleted: { type: Boolean, default: false },
+  createdAt: { type: Date, default: Date.now },
+  updatedAt: { type: Date, default: Date.now },
+}, { _id: true });
+
+const ReviewThreadSchema = new Schema({
+  filePath: { type: String, required: true, maxlength: 1000 },
+  side: { type: String, enum: ["LEFT", "RIGHT"], required: true },
+  line: { type: Number, required: true, min: 1 },
+  originalLine: { type: Number, required: true, min: 1 },
+  startLine: { type: Number, default: null, min: 1 },
+  originalStartLine: { type: Number, default: null, min: 1 },
+  commitHash: { type: String, required: true },
+  originalCommitHash: { type: String, required: true },
+  diffHunk: { type: String, default: "", maxlength: 10000 },
+  resolved: { type: Boolean, default: false },
+  resolvedBy: { type: Schema.Types.ObjectId, ref: "User", default: null },
+  resolvedAt: { type: Date, default: null },
+  outdated: { type: Boolean, default: false },
+  createdBy: { type: Schema.Types.ObjectId, ref: "User", required: true },
+  comments: { type: [ReviewCommentSchema], default: [] },
+}, { timestamps: true });
+
 const ComparisonSummarySchema = new Schema({
   filesChanged: Number,
   additions: Number,
@@ -69,6 +103,8 @@ const PullRequestSchema = new Schema({
   closedAt: { type: Date, default: null },
   comments: { type: [CommentSchema], default: [] },
   reviews: { type: [ReviewSchema], default: [] },
+  requestedReviewers: { type: [RequestedReviewerSchema], default: [] },
+  reviewThreads: { type: [ReviewThreadSchema], default: [] },
 }, { timestamps: true });
 
 PullRequestSchema.index({ repository: 1, number: 1 }, { unique: true });

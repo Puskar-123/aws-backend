@@ -8,6 +8,7 @@ async function createNotification(input, { NotificationModel = Notification } = 
   const recipient = idOf(input.recipient);
   const actor = idOf(input.actor);
   if (!recipient || (actor && recipient === actor)) return null;
+  if (NotificationModel === Notification && Notification.db.readyState !== 1) return null;
   try {
     return await NotificationModel.create({
       recipient,

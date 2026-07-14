@@ -7,6 +7,8 @@ const TYPES = [
   "issue_closed", "issue_reopened", "repository_forked", "repository_starred", "mention",
   "repository_invitation", "repository_invitation_accepted", "repository_invitation_declined",
   "collaborator_removed", "collaborator_role_changed",
+  "review_requested", "review_comment", "review_reply", "review_submitted",
+  "review_conversation_reopened", "review_required_again",
 ];
 
 const NotificationSchema = new Schema({

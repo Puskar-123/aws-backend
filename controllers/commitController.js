@@ -1,5 +1,6 @@
 const { commitRepo } = require("./commit");
 const { safeNotifyRepositoryWatchers } = require("../services/notificationService");
+const { notifyReviewersOfNewHead } = require("../services/reviewNotificationService");
 
 async function createCommit(req, res) {
   try {
@@ -22,6 +23,7 @@ async function createCommit(req, res) {
       eventKey: `commit:${id}:${commit.hash}`,
       metadata: { commit: commit.hash, branch: commit.branch },
     });
+    await notifyReviewersOfNewHead(req.repository, commit.branch, commit.hash, req.user?.id);
 
     res.status(200).json({
       message: "Commit created successfully!",

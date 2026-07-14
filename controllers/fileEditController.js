@@ -9,6 +9,7 @@ const { validateBranchName } = require("../utils/branches");
 const { isSensitiveRepoPath, normalizeRepoPath } = require("../utils/repoPath");
 const { detectRepositoryLanguage } = require("../services/repositoryLanguageService");
 const { assertCanDirectWrite } = require("../services/branchProtectionService");
+const { notifyReviewersOfNewHead } = require("../services/reviewNotificationService");
 
 const MAX_EDIT_BYTES = 512 * 1024;
 const EDITABLE_EXTENSIONS = new Set([
@@ -168,6 +169,7 @@ function createFileEditController({
         eventKey: `commit:${savedRepository._id}:${commitHash}`,
         metadata: { commit: commitHash, branch: value.branchName },
       });
+      await notifyReviewersOfNewHead(savedRepository, value.branchName, commitHash, req.user.id);
       return res.json({
         message: "File updated successfully",
         file: { path: value.filePath, branch: value.branchName },

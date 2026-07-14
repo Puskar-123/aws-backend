@@ -9,6 +9,7 @@ const { ensureDefaultBranch, validateBranchName } = require("../utils/branches")
 const { isDefaultIgnoredRepoPath, isSensitiveRepoPath, normalizeRepoPath } = require("../utils/repoPath");
 const { detectRepositoryLanguage } = require("../services/repositoryLanguageService");
 const { assertCanDirectWrite } = require("../services/branchProtectionService");
+const { notifyReviewersOfNewHead } = require("../services/reviewNotificationService");
 
 const COMMIT_METADATA = "commit.json";
 
@@ -233,6 +234,7 @@ async function pushRepo(req, res) {
     if (branchName === defaultBranch.name) repo.language = detectRepositoryLanguage([...latestFiles.values()]);
     // Existing commit history must not be rebuilt or overwritten by push.
     await repo.save();
+    await notifyReviewersOfNewHead(repo, branchName, branch.head, req.user?.id);
 
     return res.json({
       message: "Upload complete",

@@ -258,7 +258,7 @@ test("review decisions validate permissions and latest decisions control merge b
   const document = pull();
   const controller = createPullRequestController({ PullModel: { findOne: () => query(document) }, UserModel, compare: async () => comparison() });
   let res = response();
-  await controller.review({ repository: repo, user: { id: String(ownerId) }, params: { number: "1" }, body: { decision: "changes_requested", body: "Please fix it" } }, res);
+  await controller.review({ repository: repo, user: { id: String(ownerId) }, params: { number: "1" }, body: { decision: "changes_requested", body: "Please fix it", reviewedCommit: "f1" } }, res);
   assert.equal(res.statusCode, 201);
   assert.equal(res.body.review.decision, "changes_requested");
   res = response();
@@ -266,7 +266,7 @@ test("review decisions validate permissions and latest decisions control merge b
   assert.equal(res.statusCode, 409);
   assert.equal(res.body.error, "Merge blocked by requested changes");
   res = response();
-  await controller.review({ repository: repo, user: { id: String(ownerId) }, params: { number: "1" }, body: { decision: "approved", body: "Ready" } }, res);
+  await controller.review({ repository: repo, user: { id: String(ownerId) }, params: { number: "1" }, body: { decision: "approved", body: "Ready", reviewedCommit: "f1" } }, res);
   assert.equal(res.statusCode, 201);
   assert.equal(res.body.reviewSummary.blocking, false);
   res = response();
@@ -280,7 +280,7 @@ test("reviews reject missing bodies, self approval, non-owner decisions, and clo
   const controller = createPullRequestController({ PullModel: { findOne: () => query(document) }, UserModel });
   const submit = async (userId, decision, body) => {
     const res = response();
-    await controller.review({ repository: repo, user: { id: String(userId) }, params: { number: "1" }, body: { decision, body } }, res);
+    await controller.review({ repository: repo, user: { id: String(userId) }, params: { number: "1" }, body: { decision, body, reviewedCommit: "f1" } }, res);
     return res;
   };
   assert.equal((await submit(ownerId, "commented", "")).statusCode, 400);
@@ -291,6 +291,27 @@ test("reviews reject missing bodies, self approval, non-owner decisions, and clo
   assert.equal((await submit(ownerId, "commented", "Late")).statusCode, 409);
   document.status = "merged";
   assert.equal((await submit(ownerId, "commented", "Later")).statusCode, 409);
+});
+
+test("review decisions reject stale heads, self-requested changes, duplicates, and isolate notification failures", async () => {
+  const repo = repository();
+  const document = pull();
+  const controller = createPullRequestController({
+    PullModel: { findOne: () => query(document) }, UserModel,
+    notify: async () => [], notifyUser: async () => { throw new Error("notification unavailable"); },
+  });
+  let res = response();
+  await controller.review({ repository: repo, user: { id: String(authorId) }, params: { number: "1" }, body: { state: "changes_requested", body: "Self", reviewedCommit: "f1" } }, res);
+  assert.equal(res.statusCode, 403);
+  res = response();
+  await controller.review({ repository: repo, user: { id: String(ownerId) }, params: { number: "1" }, body: { state: "approved", reviewedCommit: "old" } }, res);
+  assert.equal(res.statusCode, 409); assert.equal(res.body.code, "STALE_REVIEW");
+  res = response();
+  await controller.review({ repository: repo, user: { id: String(ownerId) }, params: { number: "1" }, body: { state: "approved", reviewedCommit: "f1" } }, res);
+  assert.equal(res.statusCode, 201);
+  res = response();
+  await controller.review({ repository: repo, user: { id: String(ownerId) }, params: { number: "1" }, body: { state: "approved", reviewedCommit: "f1" } }, res);
+  assert.equal(res.statusCode, 409);
 });
 
 test("review summary uses latest reviewer decision and makes approvals stale after new commits", () => {

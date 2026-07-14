@@ -18,9 +18,10 @@ const {
 } = require("../services/pullRequestService");
 const { validateBranchName } = require("../utils/branches");
 const { getAuthenticatedUserId, requireAuthenticatedUser } = require("../utils/authUser");
-const { safeNotifyRepositoryWatchers } = require("../services/notificationService");
+const { createNotification, safeNotifyRepositoryWatchers } = require("../services/notificationService");
 const { hasRepositoryPermission } = require("../services/repositoryPermissionService");
 const { assertCanMergePullRequest, evaluateMergeProtection } = require("../services/branchProtectionService");
+const { getEffectiveReviewSummary, getRequestedReviewerStatus, threadIsOutdated } = require("../services/pullRequestReviewService");
 
 const safeAuthorFields = "_id username name avatarUrl";
 
@@ -28,7 +29,7 @@ function sendError(res, error) {
   if (!error.status) console.error("Pull request operation failed:", error.message);
   const body = { error: error.status ? error.message : "Pull request operation failed" };
   if (error.conflicts) body.conflicts = error.conflicts;
-  for (const field of ["code", "required", "current"]) if (error[field] !== undefined) body[field] = error[field];
+  for (const field of ["code", "required", "current", "unresolvedCount"]) if (error[field] !== undefined) body[field] = error[field];
   return res.status(error.status || 500).json(body);
 }
 
@@ -44,6 +45,11 @@ function pullObject(document) {
     mergedBy: safeIdentity(value.mergedBy),
     comments: (value.comments || []).map((comment) => ({ ...comment, author: safeIdentity(comment.author) })),
     reviews: (value.reviews || []).map((review) => ({ ...review, reviewer: safeIdentity(review.reviewer) })),
+    requestedReviewers: (value.requestedReviewers || []).map((request) => ({ ...request, user: safeIdentity(request.user), requestedBy: safeIdentity(request.requestedBy) })),
+    reviewThreads: (value.reviewThreads || []).map((thread) => ({
+      ...thread, createdBy: safeIdentity(thread.createdBy), resolvedBy: safeIdentity(thread.resolvedBy),
+      comments: (thread.comments || []).map((comment) => ({ ...comment, body: comment.deleted ? "This comment was deleted." : comment.body, author: safeIdentity(comment.author) })),
+    })),
     commentCount: value.comments?.length || 0,
   };
 }
@@ -56,6 +62,7 @@ function createPullRequestController({
   storage = s3,
   bucket = S3_BUCKET,
   notify = safeNotifyRepositoryWatchers,
+  notifyUser = createNotification,
 } = {}) {
   const compareLive = (repository, base, compareBranch) => compare(repository, base, compareBranch, { s3: storage, bucket });
 
@@ -65,7 +72,12 @@ function createPullRequestController({
     return query.populate("author", safeAuthorFields)
       .populate("mergedBy", safeAuthorFields)
       .populate("comments.author", safeAuthorFields)
-      .populate("reviews.reviewer", safeAuthorFields);
+      .populate("reviews.reviewer", safeAuthorFields)
+      .populate("requestedReviewers.user", safeAuthorFields)
+      .populate("requestedReviewers.requestedBy", safeAuthorFields)
+      .populate("reviewThreads.createdBy", safeAuthorFields)
+      .populate("reviewThreads.resolvedBy", safeAuthorFields)
+      .populate("reviewThreads.comments.author", safeAuthorFields);
   }
 
   async function create(req, res) {
@@ -160,20 +172,34 @@ function createPullRequestController({
       const hasChanges = comparison ? comparison.summary.filesChanged > 0 : false;
       const hasConflicts = Boolean(comparison?.summary?.hasConflicts);
       const currentCompareHead = branchByName(req.repository, pullRequest.compareBranch)?.head || null;
-      const reviews = reviewSummary(pullRequest.reviews, currentCompareHead);
+      const effectiveReviews = getEffectiveReviewSummary(req.repository, pullRequest, currentCompareHead, {
+        dismissStaleApprovals: Boolean(req.repository.branchProtections?.find((rule) => rule.branch === pullRequest.baseBranch && rule.enabled !== false)?.dismissStaleApprovals),
+      });
+      const reviews = {
+        approved: effectiveReviews.approvals,
+        changesRequested: effectiveReviews.changesRequested,
+        commented: effectiveReviews.latestByReviewer.filter((review) => review.decision === "commented").length,
+        blocking: effectiveReviews.blocking,
+        staleApprovals: effectiveReviews.staleApprovals,
+        latestByReviewer: effectiveReviews.latestByReviewer,
+      };
       const protection = evaluateMergeProtection(req.repository, pullRequest, currentCompareHead);
       const authenticatedUserId = getAuthenticatedUserId(req);
+      const safePullRequest = pullObject(pullRequest);
+      safePullRequest.reviewThreads = (safePullRequest.reviewThreads || []).map((thread) => ({ ...thread, outdated: threadIsOutdated(thread, currentCompareHead) }));
       return res.json({
-        pullRequest: pullObject(pullRequest),
+        pullRequest: safePullRequest,
         comparison,
         comparisonSource,
         historicalUnavailable,
         reviewSummary: reviews,
+        requestedReviewers: getRequestedReviewerStatus(pullRequest, req.repository).filter((item) => item.status !== "removed"),
         branchesChangedSinceCreation: {
           base: String(branchByName(req.repository, pullRequest.baseBranch)?.head || "") !== String(pullRequest.baseHeadAtCreation || ""),
           compare: String(branchByName(req.repository, pullRequest.compareBranch)?.head || "") !== String(pullRequest.compareHeadAtCreation || ""),
         },
         permissions: {
+          currentUserId: authenticatedUserId,
           canEdit: canEditPullRequest(pullRequest, req.repository, authenticatedUserId),
           canMerge: hasRepositoryPermission(req.repository, authenticatedUserId, "merge_pr") && protection.requirementsPassed,
           canComment: Boolean(authenticatedUserId),
@@ -187,7 +213,7 @@ function createPullRequestController({
           branchProtection: protection,
           reason: pullRequest.status !== "open"
             ? `Pull request is ${pullRequest.status}`
-            : (!hasChanges ? "Branches have no changes" : (hasConflicts ? "Pull request has merge conflicts" : (reviews.blocking || protection.changesRequested ? "Pull request cannot be merged while changes are requested." : (!protection.requirementsPassed ? `Pull request requires ${protection.requiredApprovals} approval${protection.requiredApprovals === 1 ? "" : "s"} before merging.` : null)))),
+            : (!hasChanges ? "Branches have no changes" : (hasConflicts ? "Pull request has merge conflicts" : (reviews.blocking || protection.changesRequested ? "Pull request cannot be merged while changes are requested." : (!protection.requirementsPassed ? (protection.requireResolvedConversations && protection.unresolvedConversations > 0 ? `Resolve ${protection.unresolvedConversations} review conversation${protection.unresolvedConversations === 1 ? "" : "s"} before merging.` : `Pull request requires ${protection.requiredApprovals} approval${protection.requiredApprovals === 1 ? "" : "s"} before merging.`) : null)))),
         },
       });
     } catch (error) { return sendError(res, error); }
@@ -264,8 +290,8 @@ function createPullRequestController({
         throw httpError(409, "Pull request has merge conflicts", { conflicts: comparison.files.filter((file) => file.conflict) });
       }
       const currentCompareHead = branchByName(req.repository, pullRequest.compareBranch)?.head || null;
-      const reviews = reviewSummary(pullRequest.reviews, currentCompareHead);
-      if (reviews.blocking) throw httpError(409, "Merge blocked by requested changes");
+      const effectiveReviews = getEffectiveReviewSummary(req.repository, pullRequest, currentCompareHead);
+      if (effectiveReviews.blocking) throw httpError(409, "Merge blocked by requested changes");
       assertCanMergePullRequest(req.repository, pullRequest, currentCompareHead);
       const finalComparison = comparisonSnapshot(comparison);
       const commit = createMergeCommit(req.repository, pullRequest, comparison, String(authenticatedUser._id));
@@ -309,29 +335,50 @@ function createPullRequestController({
       if (!pullRequest) throw httpError(404, "Pull request not found");
       const authenticatedUser = await requireAuthenticatedUser(req, UserModel);
       if (pullRequest.status !== "open") throw httpError(409, "Only an open pull request can be reviewed");
-      const decision = String(req.body?.decision || "");
+      const decision = String(req.body?.state || req.body?.decision || "");
       if (!["approved", "changes_requested", "commented"].includes(decision)) throw httpError(400, "Invalid review decision");
       const body = cleanText(req.body?.body, 5000, "Review");
       if (["changes_requested", "commented"].includes(decision) && !body) throw httpError(400, "Review body is required for this decision");
-      if (decision === "approved" && idOf(pullRequest.author) === String(authenticatedUser._id)) throw httpError(403, "You cannot approve your own pull request");
+      if (["approved", "changes_requested"].includes(decision) && idOf(pullRequest.author) === String(authenticatedUser._id)) throw httpError(403, `You cannot ${decision === "approved" ? "approve" : "request changes on"} your own pull request`);
       if (["approved", "changes_requested"].includes(decision)
         && !hasRepositoryPermission(req.repository, authenticatedUser._id, "review_pr")) {
         throw httpError(403, "You do not have permission to submit this review decision");
       }
       const commitHead = branchByName(req.repository, pullRequest.compareBranch)?.head || null;
+      if (["approved", "changes_requested"].includes(decision) && (!req.body?.reviewedCommit || String(req.body.reviewedCommit) !== String(commitHead))) throw httpError(409, "The pull request changed while you were reviewing it. Reload before submitting.", { code: "STALE_REVIEW" });
+      const previous = [...(pullRequest.reviews || [])].reverse().find((review) => idOf(review.reviewer) === idOf(authenticatedUser));
+      if (previous && idOf(previous.reviewer) === idOf(authenticatedUser) && previous.decision === decision
+        && String(previous.commitHead || "") === String(commitHead || "") && Date.now() - new Date(previous.createdAt).getTime() < 2000) {
+        throw httpError(409, "This review was already submitted");
+      }
       const now = new Date();
       pullRequest.reviews.push({ reviewer: authenticatedUser._id, decision, body, commitHead, createdAt: now, updatedAt: now });
+      const request = (pullRequest.requestedReviewers || []).find((item) => idOf(item.user) === idOf(authenticatedUser) && item.status !== "removed");
+      if (request) request.status = "reviewed";
       await pullRequest.save();
       await pullRequest.populate("reviews.reviewer", safeAuthorFields);
       const created = pullRequest.reviews.at(-1);
       const reviewValue = created?.toObject ? created.toObject() : { ...created };
       await notify(req.repository, {
-        actor: authenticatedUser._id, type: "pull_request_reviewed",
+        actor: authenticatedUser._id, type: "review_submitted",
         title: `PR #${pullRequest.number} was reviewed`, message: decision.replaceAll("_", " "),
         url: `/repo/${req.repository._id}/pulls/${pullRequest.number}`,
         eventKey: `pr-review:${pullRequest._id}:${reviewValue?._id || now.getTime()}`,
         metadata: { pullRequest: pullRequest._id, review: reviewValue?._id, decision },
       });
+      const recipients = [...new Set([pullRequest.author, ...(pullRequest.requestedReviewers || []).filter((item) => item.status !== "removed").map((item) => item.user)].map(idOf))]
+        .filter((recipient) => recipient && recipient !== idOf(authenticatedUser));
+      await Promise.all(recipients.map(async (recipient) => {
+        try {
+          return await notifyUser({
+            recipient, actor: authenticatedUser._id, repository: req.repository._id,
+            type: "review_submitted", title: `PR #${pullRequest.number} was reviewed`, message: decision.replaceAll("_", " "),
+            url: `/repo/${req.repository._id}/pulls/${pullRequest.number}`,
+            eventKey: `review-submit:${pullRequest._id}:${reviewValue?._id || now.getTime()}:${recipient}`,
+            metadata: { pullRequest: pullRequest._id, review: reviewValue?._id, decision },
+          });
+        } catch (error) { console.error("Review notification failed:", error.message); return null; }
+      }));
       return res.status(201).json({ message: "Review submitted", review: reviewValue, reviewSummary: reviewSummary(pullRequest.reviews, commitHead) });
     } catch (error) { return sendError(res, error); }
   }

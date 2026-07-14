@@ -15,6 +15,7 @@ const { listBranches, createBranch, deleteBranch } = require("../controllers/bra
 const { getSnapshot, getSnapshotFile } = require("../controllers/snapshotController");
 const { compareBranches } = require("../controllers/compareController");
 const pullRequestController = require("../controllers/pullRequestController");
+const advancedReviewController = require("../controllers/advancedReviewController");
 const issueController = require("../controllers/issueController");
 const socialController = require("../controllers/repositorySocialController");
 const fileEditController = require("../controllers/fileEditController");
@@ -78,6 +79,17 @@ repoRouter.patch("/:id/pulls/:number", requireAuth, requireRepositoryRead, pullR
 repoRouter.post("/:id/pulls/:number/comments", requireAuth, requireRepositoryRead, pullRequestController.comment);
 repoRouter.get("/:id/pulls/:number/reviews", optionalAuth, requireRepositoryRead, pullRequestController.listReviews);
 repoRouter.post("/:id/pulls/:number/reviews", requireAuth, requireRepositoryRead, pullRequestController.review);
+repoRouter.get("/:id/pulls/:number/reviewers", optionalAuth, requireRepositoryRead, advancedReviewController.reviewers);
+repoRouter.post("/:id/pulls/:number/reviewers", requireAuth, requireRepositoryRead, advancedReviewController.requestReviewer);
+repoRouter.delete("/:id/pulls/:number/reviewers/:userId", requireAuth, requireRepositoryRead, advancedReviewController.removeReviewer);
+repoRouter.get("/:id/pulls/:number/files", optionalAuth, requireRepositoryRead, advancedReviewController.files);
+repoRouter.post("/:id/pulls/:number/threads", requireAuth, requireRepositoryRead, advancedReviewController.createThread);
+repoRouter.post("/:id/pulls/:number/threads/:threadId/comments", requireAuth, requireRepositoryRead, advancedReviewController.reply);
+repoRouter.patch("/:id/pulls/:number/comments/:commentId", requireAuth, requireRepositoryRead, advancedReviewController.editComment);
+repoRouter.delete("/:id/pulls/:number/comments/:commentId", requireAuth, requireRepositoryRead, advancedReviewController.deleteComment);
+repoRouter.patch("/:id/pulls/:number/threads/:threadId/resolve", requireAuth, requireRepositoryRead, advancedReviewController.resolve);
+repoRouter.patch("/:id/pulls/:number/threads/:threadId/reopen", requireAuth, requireRepositoryRead, advancedReviewController.reopen);
+repoRouter.get("/:id/pulls/:number/merge-status", optionalAuth, requireRepositoryRead, advancedReviewController.mergeStatus);
 repoRouter.post("/:id/pulls/:number/merge", requireAuth, requireRepositoryPermission("merge_pr"), pullRequestController.merge);
 repoRouter.post("/:id/pulls/:number/close", requireAuth, requireRepositoryRead, pullRequestController.close);
 repoRouter.post("/:id/pulls/:number/reopen", requireAuth, requireRepositoryRead, pullRequestController.reopen);

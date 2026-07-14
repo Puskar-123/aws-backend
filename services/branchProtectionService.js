@@ -1,5 +1,6 @@
 const { validateBranchName } = require("../utils/branches");
-const { getRepositoryRole, hasRepositoryPermission } = require("./repositoryPermissionService");
+const { getRepositoryRole } = require("./repositoryPermissionService");
+const { getLatestReviewsByReviewer, getReviewMergeStatus } = require("./pullRequestReviewService");
 
 const BOOLEAN_FIELDS = [
   "enabled", "requirePullRequest", "blockDirectCommits", "blockForcePush",
@@ -59,30 +60,23 @@ function assertCanDeleteBranch(repository, branchName, userId) {
   return true;
 }
 
-function latestReviews(reviews = []) {
-  const latest = new Map();
-  for (const review of reviews) latest.set(idOf(review.reviewer), review);
-  return [...latest.values()];
-}
+const latestReviews = getLatestReviewsByReviewer;
 
 function evaluateMergeProtection(repository, pullRequest, currentHead) {
   const protection = getBranchProtection(repository, pullRequest.baseBranch);
   if (!protection) return { protected: false, requirementsPassed: true, requiredApprovals: 0, currentApprovals: 0 };
-  const authorId = idOf(pullRequest.author);
-  const reviews = latestReviews(pullRequest.reviews);
-  const effective = reviews.filter((review) => idOf(review.reviewer) !== authorId
-    && hasRepositoryPermission(repository, idOf(review.reviewer), "review_pr"));
-  const changesRequested = effective.some((review) => review.decision === "changes_requested");
-  const approvals = effective.filter((review) => review.decision === "approved"
-    && (!protection.dismissStaleApprovals || !review.commitHead || String(review.commitHead) === String(currentHead || "")));
+  const reviewStatus = getReviewMergeStatus(repository, pullRequest, currentHead, protection);
   return {
     protected: true,
-    requirementsPassed: !changesRequested && approvals.length >= protection.requiredApprovals,
+    requirementsPassed: reviewStatus.mergeable,
     requiredApprovals: protection.requiredApprovals,
-    currentApprovals: approvals.length,
-    changesRequested,
+    currentApprovals: reviewStatus.validApprovals,
+    changesRequested: reviewStatus.changesRequested,
+    unresolvedConversations: reviewStatus.unresolvedConversations,
+    staleApprovals: reviewStatus.staleApprovals,
+    checks: reviewStatus.checks,
     dismissStaleApprovals: Boolean(protection.dismissStaleApprovals),
-    resolvedConversationsApplicable: false,
+    resolvedConversationsApplicable: true,
     requireResolvedConversations: Boolean(protection.requireResolvedConversations),
   };
 }
@@ -91,6 +85,11 @@ function assertCanMergePullRequest(repository, pullRequest, currentHead) {
   const summary = evaluateMergeProtection(repository, pullRequest, currentHead);
   if (!summary.protected) return summary;
   if (summary.changesRequested) throw protectionError(409, "Pull request cannot be merged while changes are requested.", "CHANGES_REQUESTED", summary);
+  if (summary.requireResolvedConversations && summary.unresolvedConversations > 0) {
+    throw protectionError(409, "Resolve all review conversations before merging.", "UNRESOLVED_CONVERSATIONS", {
+      unresolvedCount: summary.unresolvedConversations,
+    });
+  }
   if (summary.currentApprovals < summary.requiredApprovals) {
     throw protectionError(409, `Pull request requires ${summary.requiredApprovals} approval${summary.requiredApprovals === 1 ? "" : "s"} before merging.`, "APPROVAL_REQUIRED", {
       required: summary.requiredApprovals, current: summary.currentApprovals,

@@ -13,9 +13,6 @@ function safeRule(rule) {
 function validatedInput(body, { requireBranch = true } = {}) {
   const input = {};
   if (requireBranch || body.branch !== undefined) input.branch = validateBranchName(body.branch);
-  if (body.requireResolvedConversations === true) {
-    throw Object.assign(new Error("Resolved-conversation protection is not available until review threads are supported"), { status: 400 });
-  }
   if (body.requiredApprovals !== undefined) {
     const count = Number(body.requiredApprovals);
     if (!Number.isInteger(count) || count < 0 || count > 10) throw Object.assign(new Error("Required approvals must be an integer from 0 to 10"), { status: 400 });

@@ -115,7 +115,6 @@ test("settings validation rejects missing branches, invalid approvals, booleans,
   const repo = repository(); repo.save = async () => repo;
   let res = response(); await controller.create({ repository: repo, user: { id: repo.owner }, body: { branch: "missing" } }, res); assert.equal(res.statusCode, 404);
   res = response(); await controller.create({ repository: repo, user: { id: repo.owner }, body: { branch: "feature/test", requiredApprovals: 11 } }, res); assert.equal(res.statusCode, 400);
-  res = response(); await controller.create({ repository: repo, user: { id: repo.owner }, body: { branch: "feature/test", requireResolvedConversations: true } }, res); assert.equal(res.statusCode, 400);
   res = response(); await controller.create({ repository: repo, user: { id: repo.owner }, body: { branch: "feature/test", blockDeletion: "yes" } }, res); assert.equal(res.statusCode, 400);
   res = response(); await controller.create({ repository: repo, user: { id: repo.owner }, body: { branch: "main" } }, res); assert.equal(res.statusCode, 409);
 });
