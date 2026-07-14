@@ -109,5 +109,6 @@ const PullRequestSchema = new Schema({
 
 PullRequestSchema.index({ repository: 1, number: 1 }, { unique: true });
 PullRequestSchema.index({ repository: 1, status: 1, createdAt: -1 });
+PullRequestSchema.index({ repository: 1, mergedAt: -1 });
 
 module.exports = mongoose.model("PullRequest", PullRequestSchema);

@@ -43,6 +43,7 @@ IssueSchema.index(
   { unique: true, partialFilterExpression: { number: { $type: "number" } } },
 );
 IssueSchema.index({ repository: 1, status: 1, updatedAt: -1 });
+IssueSchema.index({ repository: 1, closedAt: -1 });
 IssueSchema.index({ repository: 1, "labels.name": 1, priority: 1 });
 
 module.exports = mongoose.model("Issue", IssueSchema);

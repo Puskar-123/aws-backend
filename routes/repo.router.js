@@ -16,6 +16,7 @@ const { getSnapshot, getSnapshotFile } = require("../controllers/snapshotControl
 const { compareBranches } = require("../controllers/compareController");
 const pullRequestController = require("../controllers/pullRequestController");
 const advancedReviewController = require("../controllers/advancedReviewController");
+const repositoryInsightsController = require("../controllers/repositoryInsightsController");
 const issueController = require("../controllers/issueController");
 const socialController = require("../controllers/repositorySocialController");
 const fileEditController = require("../controllers/fileEditController");
@@ -90,6 +91,15 @@ repoRouter.delete("/:id/pulls/:number/comments/:commentId", requireAuth, require
 repoRouter.patch("/:id/pulls/:number/threads/:threadId/resolve", requireAuth, requireRepositoryRead, advancedReviewController.resolve);
 repoRouter.patch("/:id/pulls/:number/threads/:threadId/reopen", requireAuth, requireRepositoryRead, advancedReviewController.reopen);
 repoRouter.get("/:id/pulls/:number/merge-status", optionalAuth, requireRepositoryRead, advancedReviewController.mergeStatus);
+repoRouter.get("/:id/insights/overview", optionalAuth, repositoryInsightsController.overview);
+repoRouter.get("/:id/insights/commits", optionalAuth, repositoryInsightsController.commits);
+repoRouter.get("/:id/insights/contributors", optionalAuth, repositoryInsightsController.contributors);
+repoRouter.get("/:id/insights/languages", optionalAuth, repositoryInsightsController.languages);
+repoRouter.get("/:id/insights/issues", optionalAuth, repositoryInsightsController.issues);
+repoRouter.get("/:id/insights/pull-requests", optionalAuth, repositoryInsightsController.pullRequests);
+repoRouter.get("/:id/insights/branches", optionalAuth, repositoryInsightsController.branches);
+repoRouter.get("/:id/insights/activity", optionalAuth, repositoryInsightsController.activity);
+repoRouter.get("/:id/insights/files", optionalAuth, repositoryInsightsController.files);
 repoRouter.post("/:id/pulls/:number/merge", requireAuth, requireRepositoryPermission("merge_pr"), pullRequestController.merge);
 repoRouter.post("/:id/pulls/:number/close", requireAuth, requireRepositoryRead, pullRequestController.close);
 repoRouter.post("/:id/pulls/:number/reopen", requireAuth, requireRepositoryRead, pullRequestController.reopen);
