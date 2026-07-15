@@ -53,6 +53,7 @@ repoRouter.delete("/:id/watch", requireAuth, requireRepositoryRead, socialContro
 repoRouter.get("/:id/watch-status", optionalAuth, requireRepositoryRead, socialController.status);
 repoRouter.post("/:id/fork", requireAuth, requireRepositoryRead, socialController.fork);
 repoRouter.get("/:id/file-editor", requireRepositoryWrite, fileEditController.read);
+repoRouter.post("/:id/file-editor", requireRepositoryWrite, fileEditController.create);
 repoRouter.put("/:id/file-editor", requireRepositoryWrite, fileEditController.update);
 repoRouter.get("/:id/branch-protection", requireAuth, requireRepositoryPermission("manage_branch_protection"), branchProtectionController.list);
 repoRouter.post("/:id/branch-protection", requireAuth, requireRepositoryPermission("manage_branch_protection"), branchProtectionController.create);

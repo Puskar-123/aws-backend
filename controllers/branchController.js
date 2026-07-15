@@ -1,6 +1,6 @@
 const { getAccessibleRepository, sendAccessError } = require("../utils/repositoryAccess");
 const { ensureDefaultBranch, validateBranchName } = require("../utils/branches");
-const { getBranchHistory } = require("../services/branchService");
+const { getBranchHistory, getBranchState } = require("../services/branchService");
 const { safeNotifyRepositoryWatchers } = require("../services/notificationService");
 const { assertCanDeleteBranch, getProtectionSummary } = require("../services/branchProtectionService");
 const { getAuthenticatedUserId } = require("../utils/repositoryAccess");
@@ -17,6 +17,7 @@ function createBranchController({ getRepository = getAccessibleRepository } = {}
         createdAt: branch.createdAt || null,
         updatedAt: branch.updatedAt || null,
         commitCount: (getBranchHistory(repo, branch.name, defaultBranch.name) || []).length,
+        state: getBranchState(repo, branch.name, defaultBranch.name),
         protection: getProtectionSummary(repo, branch.name, getAuthenticatedUserId(req)),
       }));
       return res.json({ defaultBranch: defaultBranch.name, branches });

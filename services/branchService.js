@@ -74,4 +74,12 @@ function getBranchSnapshot(repository, branchName) {
   return { branch, descriptor, files, warnings };
 }
 
-module.exports = { branchByName, getBranchHistory, getBranchSnapshot, normalizeCommit };
+function getBranchState(repository, branchName, defaultBranchName = repository.defaultBranch || "main") {
+  const snapshot = getBranchSnapshot(repository, branchName);
+  if (!snapshot) return null;
+  const commitCount = (getBranchHistory(repository, branchName, defaultBranchName) || []).length;
+  const fileCount = snapshot.files.length;
+  return { isEmpty: fileCount === 0 && commitCount === 0, fileCount, commitCount };
+}
+
+module.exports = { branchByName, getBranchHistory, getBranchSnapshot, getBranchState, normalizeCommit };

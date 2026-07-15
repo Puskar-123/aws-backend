@@ -2,7 +2,7 @@ const path = require("path");
 const { s3, S3_BUCKET } = require("../config/aws-config");
 const { getAccessibleRepository, sendAccessError } = require("../utils/repositoryAccess");
 const { ensureDefaultBranch, validateBranchName } = require("../utils/branches");
-const { getBranchSnapshot } = require("../services/branchService");
+const { getBranchSnapshot, getBranchState } = require("../services/branchService");
 const { isDefaultIgnoredRepoPath, normalizeRepositoryPath } = require("../utils/paths");
 
 function getSnapshotDescriptor(repository, requestedBranch) {
@@ -41,6 +41,7 @@ async function getSnapshot(req, res) {
       branch: snapshot.branch.name,
       head: snapshot.branch.head || null,
       commit: snapshot.descriptor?.commit || null,
+      state: getBranchState(repository, snapshot.branch.name, snapshot.defaultBranch.name),
       files,
       ...(snapshot.warnings.length ? { warnings: snapshot.warnings } : {}),
     });

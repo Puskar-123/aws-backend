@@ -3,13 +3,14 @@ const path = require("path");
 const Repository = require("../models/repoModel");
 const User = require("../models/userModel");
 const { s3, S3_BUCKET } = require("../config/aws-config");
-const { getBranchSnapshot } = require("../services/branchService");
+const { getBranchSnapshot, getBranchState } = require("../services/branchService");
 const { safeNotifyRepositoryWatchers } = require("../services/notificationService");
 const { validateBranchName } = require("../utils/branches");
 const { isSensitiveRepoPath, normalizeRepoPath } = require("../utils/repoPath");
 const { detectRepositoryLanguage } = require("../services/repositoryLanguageService");
 const { assertCanDirectWrite } = require("../services/branchProtectionService");
 const { notifyReviewersOfNewHead } = require("../services/reviewNotificationService");
+const { hasRepositoryPermission } = require("../services/repositoryPermissionService");
 
 const MAX_EDIT_BYTES = 512 * 1024;
 const EDITABLE_EXTENSIONS = new Set([
@@ -18,6 +19,7 @@ const EDITABLE_EXTENSIONS = new Set([
   ".c", ".cpp", ".h", ".hpp", ".go", ".rs", ".php", ".rb", ".sh", ".sql",
 ]);
 const EDITABLE_NAMES = new Set([".gitignore", ".env.example"]);
+const STARTER_PATHS = Object.freeze({ readme: "README.md", gitignore: ".gitignore", license: "LICENSE" });
 
 function editError(status, message) { return Object.assign(new Error(message), { status }); }
 function isEditablePath(filePath) {
@@ -46,6 +48,91 @@ function createFileEditController({
   bucket = S3_BUCKET,
   notify = safeNotifyRepositoryWatchers,
 } = {}) {
+  async function create(req, res) {
+    try {
+      const starterType = String(req.body?.starterType || "").toLowerCase();
+      const filePath = STARTER_PATHS[starterType];
+      if (!filePath) throw editError(400, "Invalid starter file type");
+      if (typeof req.body?.content !== "string" || !req.body.content.trim()) throw editError(400, "Starter file content is required");
+      const content = Buffer.from(req.body.content, "utf8");
+      if (content.length > MAX_EDIT_BYTES) throw editError(413, "This file is too large to create in the browser.");
+      if (hasNullByte(content)) throw editError(415, "Binary files cannot be created in the browser");
+      const commitMessage = String(req.body?.commitMessage || "Initial commit").trim();
+      if (!commitMessage || commitMessage.length > 500) throw editError(400, "Commit message must contain 1 to 500 characters");
+
+      const repository = await RepoModel.findById(req.repository._id);
+      if (!repository) throw editError(404, "Repository not found");
+      const branchName = validateBranchName(req.body?.branch || repository.defaultBranch || "main");
+      const snapshot = getBranchSnapshot(repository, branchName);
+      if (!snapshot) throw editError(404, `Branch '${branchName}' does not exist`);
+      if (!hasRepositoryPermission(repository, req.user?.id, "write_files")) throw editError(403, "You do not have permission to create files in this repository");
+      assertCanDirectWrite(repository, branchName, req.user.id, "browser_starter_file");
+      if (snapshot.files.some((file) => String(file.path || file.filename).toLowerCase() === filePath.toLowerCase())) {
+        throw editError(409, `${filePath} already exists`);
+      }
+
+      const currentHead = snapshot.branch.head || null;
+      const commitHash = crypto.randomUUID();
+      const fileHash = crypto.createHash("sha256").update(content).digest("hex");
+      const contentType = starterType === "readme" ? "text/markdown; charset=utf-8" : "text/plain; charset=utf-8";
+      const key = `repos/${repository._id}/commits/${commitHash}/${filePath}`;
+      await storage.putObject({ Bucket: bucket, Key: key, Body: content, ContentType: contentType }).promise();
+      const changedFile = { filename: filePath, path: filePath, hash: fileHash, s3Key: key, size: content.length, contentType, status: "added" };
+      const nextSnapshot = [...snapshot.files.map(safeFile), changedFile];
+      let author = { name: "CodeHub user", email: "" };
+      const user = await UserModel.findById(req.user.id).select("username name email");
+      if (user) author = { name: user.username || user.name || "CodeHub user", email: user.email || "" };
+      const time = new Date();
+      const commitDocument = {
+        hash: commitHash, parent: currentHead, parents: currentHead ? [currentHead] : [], branch: branchName,
+        author, message: commitMessage, files: [changedFile], snapshot: nextSnapshot,
+        summary: { filesChanged: 1, additions: 0, deletions: 0 }, time,
+      };
+      const branch = repository.branches.find((item) => item.name === branchName);
+      const updates = { $push: { commits: commitDocument }, $set: { "branches.$[createdBranch].head": commitHash } };
+      if (branch.isDefault || repository.defaultBranch === branch.name) {
+        updates.$set.content = nextSnapshot;
+        updates.$set.language = detectRepositoryLanguage(nextSnapshot);
+      }
+      let savedRepository;
+      if (typeof RepoModel.findOneAndUpdate === "function") {
+        savedRepository = await RepoModel.findOneAndUpdate(
+          { _id: repository._id, branches: { $elemMatch: { name: branchName, head: currentHead } } },
+          updates,
+          { new: true, arrayFilters: [{ "createdBranch.name": branchName }] },
+        );
+        if (!savedRepository) throw editError(409, "The branch changed while the starter file was being created. Reload and try again.");
+      } else {
+        repository.commits.push(commitDocument);
+        branch.head = commitHash;
+        if (branch.isDefault || repository.defaultBranch === branch.name) {
+          repository.content = nextSnapshot;
+          repository.language = detectRepositoryLanguage(nextSnapshot);
+        }
+        await repository.save();
+        savedRepository = repository;
+      }
+
+      await notify(savedRepository, {
+        actor: req.user.id, type: "commit", title: `New commit in ${savedRepository.name}`,
+        message: `${author.name} committed: ${commitMessage}`,
+        url: `/repo/${savedRepository._id}?branch=${encodeURIComponent(branchName)}&path=${encodeURIComponent(filePath)}`,
+        eventKey: `commit:${savedRepository._id}:${commitHash}`,
+        metadata: { commit: commitHash, branch: branchName },
+      });
+      await notifyReviewersOfNewHead(savedRepository, branchName, commitHash, req.user.id);
+      return res.status(201).json({
+        message: `${filePath} created successfully`,
+        file: { path: filePath, branch: branchName },
+        commit: { hash: commitHash, message: commitMessage, createdAt: time },
+        state: getBranchState(savedRepository, branchName, savedRepository.defaultBranch || "main"),
+      });
+    } catch (error) {
+      if (!error.status) console.error(`Starter file creation failed for repository ${req.params.id}:`, error.message);
+      return res.status(error.status || 500).json({ error: error.status ? error.message : "Unable to create starter file", ...(error.code ? { code: error.code, branch: error.branch, suggestedAction: error.suggestedAction } : {}) });
+    }
+  }
+
   async function context(req) {
     const repository = await RepoModel.findById(req.repository._id);
     if (!repository) throw editError(404, "Repository not found");
@@ -181,7 +268,7 @@ function createFileEditController({
     }
   }
 
-  return { read, update };
+  return { create, read, update };
 }
 
-module.exports = { EDITABLE_EXTENSIONS, MAX_EDIT_BYTES, createFileEditController, isEditablePath, ...createFileEditController() };
+module.exports = { EDITABLE_EXTENSIONS, MAX_EDIT_BYTES, STARTER_PATHS, createFileEditController, isEditablePath, ...createFileEditController() };
