@@ -5,6 +5,7 @@ const { isSensitiveRepoPath } = require("../utils/repoPath");
 const { social: repositorySocial } = require("./repositorySocialController");
 const { canViewRepository, permissionSummary, getRepositoryRole, hasRepositoryPermission } = require("../services/repositoryPermissionService");
 const { assertCanDirectWrite, getProtectionSummary } = require("../services/branchProtectionService");
+const { getUserRepositoryStats } = require("../services/repositoryStatisticsService");
 
 function withoutAccessLists(document) {
   const value = document?.toObject ? document.toObject() : { ...document };
@@ -249,9 +250,10 @@ async function fetchRepositoriesForCurrentUser(req, res) {
     }
 
     const fields = "_id name description visibility language owner collaborators updatedAt createdAt";
-    const [owned, shared] = await Promise.all([
+    const [owned, shared, statistics] = await Promise.all([
       Repository.find({ owner: userID }).select(fields).populate("owner", "_id username name avatarUrl").lean(),
       Repository.find({ "collaborators.user": userID }).select(fields).populate("owner", "_id username name avatarUrl").lean(),
+      getUserRepositoryStats(userID),
     ]);
     const myRepositories = owned.map(({ collaborators, ...repository }) => repository);
     const sharedRepositories = shared
@@ -262,7 +264,7 @@ async function fetchRepositoriesForCurrentUser(req, res) {
         return { ...safe, currentUserRole };
       });
 
-    res.json({ repositories: myRepositories, myRepositories, sharedRepositories });
+    res.json({ repositories: myRepositories, myRepositories, sharedRepositories, statistics });
 
   } catch (err) {
     console.error("FULL ERROR:", err);
