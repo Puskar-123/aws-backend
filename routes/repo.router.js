@@ -24,6 +24,8 @@ const publicDiscoveryController = require("../controllers/publicDiscoveryControl
 const collaboratorController = require("../controllers/repositoryCollaboratorController");
 const branchProtectionController = require("../controllers/branchProtectionController");
 const repositoryCliController = require("../controllers/repositoryCliController");
+const tagController = require("../controllers/tagController");
+const releaseController = require("../controllers/releaseController");
 const { optionalAuth, requireAuth } = require("../middleware/authMiddleware");
 const repositoryAccess = require("../utils/repositoryAccess");
 const { requireRepositoryRead, requireRepositoryWrite } = repositoryAccess;
@@ -37,6 +39,12 @@ const receiveCliPush = (req, res, next) => cliUpload.array("files")(req, res, (e
   if (!error) return next();
   const tooLarge = error.code === "LIMIT_FILE_SIZE" || error.code === "LIMIT_FILE_COUNT";
   return res.status(tooLarge ? 413 : 400).json({ error: tooLarge ? "Push exceeds the configured file limits" : "Invalid push upload", code: tooLarge ? "FILE_TOO_LARGE" : "INVALID_PUSH" });
+});
+const releaseUpload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 100 * 1024 * 1024, files: 1, fields: 10 } });
+const receiveReleaseAsset = (req, res, next) => releaseUpload.single("asset")(req, res, (error) => {
+  if (!error) return next();
+  const tooLarge = error.code === "LIMIT_FILE_SIZE";
+  return res.status(tooLarge ? 413 : 400).json({ error: tooLarge ? "Asset exceeds the 100 MB limit" : "Invalid release asset upload", code: tooLarge ? "ASSET_TOO_LARGE" : "INVALID_ASSET_UPLOAD" });
 });
 
 // Existing write workflows.
@@ -65,6 +73,25 @@ repoRouter.get("/:id/collaborators/invitations", requireAuth, requireRepositoryP
 repoRouter.patch("/:id/collaborators/:userId", requireAuth, requireRepositoryPermission("manage_collaborators"), collaboratorController.updateRole);
 repoRouter.delete("/:id/collaborators/:userId", requireAuth, requireRepositoryPermission("manage_collaborators"), collaboratorController.remove);
 repoRouter.delete("/:id/collaborators/invitations/:invitationId", requireAuth, requireRepositoryPermission("manage_collaborators"), collaboratorController.cancel);
+
+// Tags and releases reference canonical embedded commits and stay before /:id.
+repoRouter.get("/:id/tags", optionalAuth, requireRepositoryRead, tagController.list);
+repoRouter.post("/:id/tags", requireAuth, requireRepositoryRead, tagController.create);
+repoRouter.get("/:id/tags/:tagName", optionalAuth, requireRepositoryRead, tagController.details);
+repoRouter.patch("/:id/tags/:tagName", requireAuth, requireRepositoryRead, tagController.update);
+repoRouter.delete("/:id/tags/:tagName", requireAuth, requireRepositoryRead, tagController.remove);
+repoRouter.get("/:id/tags/:tagName/source.zip", optionalAuth, requireRepositoryRead, releaseController.sourceArchive);
+repoRouter.get("/:id/releases", optionalAuth, requireRepositoryRead, releaseController.list);
+repoRouter.post("/:id/releases", requireAuth, requireRepositoryRead, releaseController.create);
+repoRouter.get("/:id/releases/latest", optionalAuth, requireRepositoryRead, releaseController.latest);
+repoRouter.get("/:id/releases/:releaseId/source.zip", optionalAuth, requireRepositoryRead, releaseController.sourceArchive);
+repoRouter.get("/:id/releases/:releaseId", optionalAuth, requireRepositoryRead, releaseController.details);
+repoRouter.patch("/:id/releases/:releaseId", requireAuth, requireRepositoryRead, releaseController.update);
+repoRouter.delete("/:id/releases/:releaseId", requireAuth, requireRepositoryRead, releaseController.remove);
+repoRouter.post("/:id/releases/:releaseId/publish", requireAuth, requireRepositoryRead, releaseController.publish);
+repoRouter.post("/:id/releases/:releaseId/assets", requireAuth, requireRepositoryRead, receiveReleaseAsset, releaseController.uploadAsset);
+repoRouter.get("/:id/releases/:releaseId/assets/:assetId/download", optionalAuth, requireRepositoryRead, releaseController.downloadAsset);
+repoRouter.delete("/:id/releases/:releaseId/assets/:assetId", requireAuth, requireRepositoryRead, releaseController.deleteAsset);
 
 // Branch, history, and clone/snapshot APIs. Keep these before /:id.
 repoRouter.get("/explore", publicDiscoveryController.explore);

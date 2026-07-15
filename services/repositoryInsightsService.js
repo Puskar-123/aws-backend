@@ -72,18 +72,22 @@ function normalizeWeekRows(rows) {
 }
 const commitMatch = (repositoryId, range, branch) => ({ _id: repositoryId, "commits.time": { $gte: range.from, $lte: range.to }, ...(branch ? { "commits.branch": branch } : {}) });
 
-async function getOverview({ Repository, Issue, PullRequest, repository, range }) {
-  const [commitRows, issueRows, pullRows] = await Promise.all([
+async function getOverview({ Repository, Issue, PullRequest, Tag, Release, repository, range }) {
+  const [commitRows, issueRows, pullRows, tagCount, releaseRows] = await Promise.all([
     Repository.aggregate([{ $match: { _id: repository._id } }, { $unwind: "$commits" }, { $match: { "commits.time": { $gte: range.from, $lte: range.to } } }, { $group: { _id: null, commits: { $sum: 1 }, contributors: { $addToSet: { $ifNull: ["$commits.author.name", "Unknown contributor"] } } } }]),
     Issue.aggregate([{ $match: { repository: repository._id } }, { $group: { _id: "$status", count: { $sum: 1 } } }]),
     PullRequest.aggregate([{ $match: { repository: repository._id } }, { $group: { _id: "$status", count: { $sum: 1 } } }]),
+    Tag ? Tag.countDocuments({ repository: repository._id }) : 0,
+    Release ? Release.aggregate([{ $match: { repository: repository._id, draft: false } }, { $group: { _id: "$prerelease", count: { $sum: 1 } } }]) : [],
   ]);
   const issues = Object.fromEntries(issueRows.map((row) => [row._id, row.count])); const pulls = Object.fromEntries(pullRows.map((row) => [row._id, row.count]));
+  const releaseCounts = Object.fromEntries(releaseRows.map((row) => [String(row._id), row.count]));
   return { repository: { _id: repository._id, name: repository.name, owner: repository.owner }, summary: {
     commits: commitRows[0]?.commits || 0, contributors: commitRows[0]?.contributors?.length || 0,
     branches: repository.branches?.length || 0, openIssues: issues.open || 0, closedIssues: issues.closed || 0,
     openPullRequests: pulls.open || 0, closedPullRequests: pulls.closed || 0, mergedPullRequests: pulls.merged || 0,
     stars: repository.stars?.length || 0, forks: repository.forks?.length || 0, watchers: repository.watchers?.length || 0,
+    ...(Tag || Release ? { tags: tagCount, releases: (releaseCounts.false || 0) + (releaseCounts.true || 0), prereleases: releaseCounts.true || 0 } : {}),
   }, range: range.key, timezone: range.timezone, socialHistoryAvailable: false };
 }
 
@@ -159,14 +163,16 @@ async function getPullRequestAnalytics({ PullRequest, repository, range }) {
   return { summary: { open: summary.open || 0, closed: summary.closed || 0, merged: summary.merged || 0, averageMergeHours: result.mergeTime?.[0] ? Number((result.mergeTime[0].milliseconds / 3600000).toFixed(1)) : null, averageReviewHours: result.reviewTime?.[0] ? Number((result.reviewTime[0].milliseconds / 3600000).toFixed(1)) : null }, openedSeries: result.opened || [], mergedSeries: result.merged || [], interval: range.interval, range: range.key };
 }
 
-async function getRecentActivity({ Repository, Issue, PullRequest, repository, range, query }) {
+async function getRecentActivity({ Repository, Issue, PullRequest, Tag, Release, repository, range, query }) {
   const pagination = parsePagination(query, 20, 50); const filter = String(query.type || "all");
-  if (!["all", "commits", "issues", "pull_requests", "branches", "repository"].includes(filter)) throw insightError(400, "Invalid activity type");
+  if (!["all", "commits", "issues", "pull_requests", "branches", "repository", "tags", "releases"].includes(filter)) throw insightError(400, "Invalid activity type");
   const cap = pagination.skip + pagination.limit + 1;
   const tasks = [];
   if (["all", "commits"].includes(filter)) tasks.push(Repository.aggregate([{ $match: { _id: repository._id } }, { $unwind: "$commits" }, { $match: { "commits.time": { $gte: range.from, $lte: range.to } } }, { $sort: { "commits.time": -1 } }, { $limit: cap }, { $project: { _id: 0, type: { $literal: "commit" }, actorName: { $ifNull: ["$commits.author.name", "Deleted contributor"] }, title: { $concat: ["Committed to ", { $ifNull: ["$commits.branch", repository.defaultBranch || "main"] }] }, message: "$commits.message", createdAt: "$commits.time", target: "$commits.hash" } }]));
   if (["all", "issues"].includes(filter)) tasks.push(Issue.find({ repository: repository._id, $or: [{ createdAt: { $gte: range.from, $lte: range.to } }, { closedAt: { $gte: range.from, $lte: range.to } }] }).select("number title author createdAt status closedAt closedBy").populate("author", "_id username name avatarUrl").populate("closedBy", "_id username name avatarUrl").sort({ createdAt: -1 }).limit(cap).lean().then((items) => items.flatMap((item) => [{ type: "issue_opened", actor: item.author, title: `Opened issue #${item.number || "?"}`, message: item.title, createdAt: item.createdAt, url: `/repo/${repository._id}/issues/${item.number}` }, ...(item.closedAt && item.closedAt >= range.from && item.closedAt <= range.to ? [{ type: "issue_closed", actor: item.closedBy, title: `Closed issue #${item.number || "?"}`, message: item.title, createdAt: item.closedAt, url: `/repo/${repository._id}/issues/${item.number}` }] : [])].filter((event) => event.createdAt >= range.from && event.createdAt <= range.to))));
   if (["all", "pull_requests"].includes(filter)) tasks.push(PullRequest.find({ repository: repository._id, $or: [{ createdAt: { $gte: range.from, $lte: range.to } }, { mergedAt: { $gte: range.from, $lte: range.to } }] }).select("number title author createdAt status mergedAt mergedBy").populate("author", "_id username name avatarUrl").populate("mergedBy", "_id username name avatarUrl").sort({ createdAt: -1 }).limit(cap).lean().then((items) => items.flatMap((item) => [{ type: "pull_request_opened", actor: item.author, title: `Opened pull request #${item.number}`, message: item.title, createdAt: item.createdAt, url: `/repo/${repository._id}/pulls/${item.number}` }, ...(item.mergedAt && item.mergedAt >= range.from && item.mergedAt <= range.to ? [{ type: "pull_request_merged", actor: item.mergedBy, title: `Merged pull request #${item.number}`, message: item.title, createdAt: item.mergedAt, url: `/repo/${repository._id}/pulls/${item.number}` }] : [])].filter((event) => event.createdAt >= range.from && event.createdAt <= range.to))));
+  if (Tag && ["all", "tags"].includes(filter)) tasks.push(Tag.find({ repository: repository._id, createdAt: { $gte: range.from, $lte: range.to } }).populate("createdBy", "_id username name avatarUrl").sort({ createdAt: -1 }).limit(cap).lean().then((items) => items.map((item) => ({ type: "tag_created", actor: item.createdBy, title: `Created tag ${item.name}`, message: item.message || item.targetCommitHash, createdAt: item.createdAt, url: `/repo/${repository._id}/releases` }))));
+  if (Release && ["all", "releases"].includes(filter)) tasks.push(Release.find({ repository: repository._id, draft: false, publishedAt: { $gte: range.from, $lte: range.to } }).populate("createdBy", "_id username name avatarUrl").populate("tag", "name").sort({ publishedAt: -1 }).limit(cap).lean().then((items) => items.map((item) => ({ type: "release_published", actor: item.createdBy, title: `Published ${item.title}`, message: item.tag?.name || "Release", createdAt: item.publishedAt, url: `/repo/${repository._id}/releases/${item._id}` }))));
   const groups = await Promise.all(tasks); let items = groups.flat().map((item) => item.type === "commit" ? { ...item, actor: { username: item.actorName }, url: `/repo/${repository._id}?branch=${encodeURIComponent(String(item.title).replace("Committed to ", ""))}` } : item);
   if (["all", "branches"].includes(filter)) items.push(...(repository.branches || []).filter((branch) => branch.createdAt && branch.createdAt >= range.from && branch.createdAt <= range.to).map((branch) => ({ type: "branch_created", actor: repository.owner, title: `Created branch ${branch.name}`, message: branch.name, createdAt: branch.createdAt, url: `/repo/${repository._id}?branch=${encodeURIComponent(branch.name)}` })));
   if (["all", "repository"].includes(filter) && repository.createdAt >= range.from && repository.createdAt <= range.to) items.push({ type: "repository_created", actor: repository.owner, title: "Created repository", message: repository.name, createdAt: repository.createdAt, url: `/repo/${repository._id}` });

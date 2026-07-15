@@ -9,6 +9,7 @@ const TYPES = [
   "collaborator_removed", "collaborator_role_changed",
   "review_requested", "review_comment", "review_reply", "review_submitted",
   "review_conversation_reopened", "review_required_again",
+  "release_published",
 ];
 
 const NotificationSchema = new Schema({
