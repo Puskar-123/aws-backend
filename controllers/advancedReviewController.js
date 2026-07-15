@@ -5,7 +5,7 @@ const { s3, S3_BUCKET } = require("../config/aws-config");
 const { compareRepository } = require("../services/compareService");
 const { branchByName } = require("../services/branchService");
 const { createNotification } = require("../services/notificationService");
-const { getBranchProtection } = require("../services/branchProtectionService");
+const { getBranchProtection, evaluateRequiredStatusChecks } = require("../services/branchProtectionService");
 const { getRepositoryRole, hasRepositoryPermission } = require("../services/repositoryPermissionService");
 const { getRequestedReviewerStatus, getReviewMergeStatus, threadIsOutdated } = require("../services/pullRequestReviewService");
 const { cleanText, httpError, idOf, validPullNumber } = require("../services/pullRequestService");
@@ -277,10 +277,11 @@ function createAdvancedReviewController({
       const head = branchByName(req.repository, pullRequest.compareBranch)?.head || null;
       const protection = getBranchProtection(req.repository, pullRequest.baseBranch);
       const review = getReviewMergeStatus(req.repository, pullRequest, head, protection);
+      const requiredChecks = await evaluateRequiredStatusChecks(req.repository, pullRequest, head, req.user?.id);
       let conflicts = false;
       if (pullRequest.status === "open") conflicts = Boolean((await compareLive(req.repository, pullRequest)).summary?.hasConflicts);
       const statusCheck = { name: "Merge conflicts", passed: !conflicts, message: conflicts ? "Conflicts must be resolved" : "No merge conflicts" };
-      return res.json({ ...review, mergeable: pullRequest.status === "open" && review.mergeable && !conflicts, conflicts, checks: [...review.checks, statusCheck] });
+      return res.json({ ...review, requiredStatusChecks: requiredChecks, mergeable: pullRequest.status === "open" && review.mergeable && requiredChecks.passed && !conflicts, conflicts, checks: [...review.checks, ...requiredChecks.checks.map((check) => ({ name: check.name, passed: check.passed, message: check.state })), statusCheck] });
     } catch (error) { return sendError(res, error); }
   }
 

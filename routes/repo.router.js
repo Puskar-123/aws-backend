@@ -26,6 +26,8 @@ const branchProtectionController = require("../controllers/branchProtectionContr
 const repositoryCliController = require("../controllers/repositoryCliController");
 const tagController = require("../controllers/tagController");
 const releaseController = require("../controllers/releaseController");
+const workflowController = require("../controllers/workflowController");
+const { workflowRateLimit } = require("../middleware/workflowRateLimit");
 const { optionalAuth, requireAuth } = require("../middleware/authMiddleware");
 const repositoryAccess = require("../utils/repositoryAccess");
 const { requireRepositoryRead, requireRepositoryWrite } = repositoryAccess;
@@ -93,6 +95,15 @@ repoRouter.post("/:id/releases/:releaseId/assets", requireAuth, requireRepositor
 repoRouter.get("/:id/releases/:releaseId/assets/:assetId/download", optionalAuth, requireRepositoryRead, releaseController.downloadAsset);
 repoRouter.delete("/:id/releases/:releaseId/assets/:assetId", requireAuth, requireRepositoryRead, releaseController.deleteAsset);
 
+// Actions APIs only queue work; the Express process never executes repository commands.
+repoRouter.get("/:id/actions/workflows", optionalAuth, requireRepositoryRead, workflowController.workflows);
+repoRouter.get("/:id/actions/runs", optionalAuth, requireRepositoryRead, workflowController.runs);
+repoRouter.post("/:id/actions/workflows/:workflowId/dispatch", requireAuth, requireRepositoryRead, workflowRateLimit(), workflowController.dispatch);
+repoRouter.get("/:id/actions/runs/:runId/logs", optionalAuth, requireRepositoryRead, workflowController.logs);
+repoRouter.get("/:id/actions/runs/:runId", optionalAuth, requireRepositoryRead, workflowController.details);
+repoRouter.post("/:id/actions/runs/:runId/cancel", requireAuth, requireRepositoryRead, workflowRateLimit(), workflowController.cancel);
+repoRouter.post("/:id/actions/runs/:runId/rerun", requireAuth, requireRepositoryRead, workflowRateLimit(), workflowController.rerun);
+
 // Branch, history, and clone/snapshot APIs. Keep these before /:id.
 repoRouter.get("/explore", publicDiscoveryController.explore);
 repoRouter.get("/resolve/:owner/:name", optionalAuth, repositoryCliController.resolve);
@@ -115,6 +126,7 @@ repoRouter.post("/:id/issues/:number/link-pr", requireAuth, requireRepositoryRea
 repoRouter.post("/:id/pulls", requireAuth, requireRepositoryRead, pullRequestController.create);
 repoRouter.get("/:id/pulls", optionalAuth, requireRepositoryRead, pullRequestController.list);
 repoRouter.get("/:id/pulls/:number", optionalAuth, requireRepositoryRead, pullRequestController.details);
+repoRouter.get("/:id/pulls/:number/checks", optionalAuth, requireRepositoryRead, workflowController.pullChecks);
 repoRouter.patch("/:id/pulls/:number", requireAuth, requireRepositoryRead, pullRequestController.update);
 repoRouter.post("/:id/pulls/:number/comments", requireAuth, requireRepositoryRead, pullRequestController.comment);
 repoRouter.get("/:id/pulls/:number/reviews", optionalAuth, requireRepositoryRead, pullRequestController.listReviews);
@@ -139,6 +151,7 @@ repoRouter.get("/:id/insights/pull-requests", optionalAuth, repositoryInsightsCo
 repoRouter.get("/:id/insights/branches", optionalAuth, repositoryInsightsController.branches);
 repoRouter.get("/:id/insights/activity", optionalAuth, repositoryInsightsController.activity);
 repoRouter.get("/:id/insights/files", optionalAuth, repositoryInsightsController.files);
+repoRouter.get("/:id/insights/actions", optionalAuth, repositoryInsightsController.actions);
 repoRouter.post("/:id/pulls/:number/merge", requireAuth, requireRepositoryPermission("merge_pr"), pullRequestController.merge);
 repoRouter.post("/:id/pulls/:number/close", requireAuth, requireRepositoryRead, pullRequestController.close);
 repoRouter.post("/:id/pulls/:number/reopen", requireAuth, requireRepositoryRead, pullRequestController.reopen);

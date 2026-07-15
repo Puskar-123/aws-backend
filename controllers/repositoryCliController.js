@@ -13,6 +13,8 @@ const { assertCanDirectWrite, getProtectionSummary } = require("../services/bran
 const { detectRepositoryLanguage } = require("../services/repositoryLanguageService");
 const { safeNotifyRepositoryWatchers } = require("../services/notificationService");
 const { notifyReviewersOfNewHead } = require("../services/reviewNotificationService");
+const { safeScheduleCommitWorkflows } = require("../services/workflowEventService");
+const { isWorkflowPath } = require("../services/workflowDiscoveryService");
 
 const MAX_FILE_SIZE = 25 * 1024 * 1024;
 const MAX_TOTAL_SIZE = 100 * 1024 * 1024;
@@ -26,7 +28,7 @@ function safeFile(file) {
 }
 function cleanPath(value) {
   const filePath = normalizeRepoPath(String(value || ""));
-  if (isDefaultIgnoredRepoPath(filePath)) throw httpError(403, `Protected or ignored path is not allowed: ${filePath}`, "PROTECTED_FILE", { path: filePath });
+  if (isDefaultIgnoredRepoPath(filePath) && !isWorkflowPath(filePath)) throw httpError(403, `Protected or ignored path is not allowed: ${filePath}`, "PROTECTED_FILE", { path: filePath });
   return filePath;
 }
 function parseManifest(req) {
@@ -44,7 +46,7 @@ async function hashFile(filePath) {
 }
 async function cleanup(files = []) { await Promise.all(files.map((file) => fsp.rm(file.path, { force: true }).catch(() => {}))); }
 
-function createRepositoryCliController({ RepositoryModel = Repository, UserModel = User, storage = s3, bucket = S3_BUCKET, notifyWatchers = safeNotifyRepositoryWatchers, notifyReviewers = notifyReviewersOfNewHead } = {}) {
+function createRepositoryCliController({ RepositoryModel = Repository, UserModel = User, storage = s3, bucket = S3_BUCKET, notifyWatchers = safeNotifyRepositoryWatchers, notifyReviewers = notifyReviewersOfNewHead, scheduleWorkflows = safeScheduleCommitWorkflows } = {}) {
   async function resolve(req, res) {
     try {
       const repository = await RepositoryModel.findOne({ name: req.params.name }).populate("owner", "_id username name avatarUrl");
@@ -137,6 +139,7 @@ function createRepositoryCliController({ RepositoryModel = Repository, UserModel
       if (!saved) throw httpError(409, "The remote branch changed while the push was being finalized.", "REMOTE_CHANGED");
       await notifyWatchers(saved, { actor: req.user.id, type: "commit", title: `${actor.username || "A contributor"} pushed ${commitDocuments.length} commit${commitDocuments.length === 1 ? "" : "s"}`, message: commitDocuments.at(-1).message, url: `/repo/${saved._id}?branch=${encodeURIComponent(manifest.branch)}`, eventKey: `cli-push:${saved._id}:${parent}`, metadata: { branch: manifest.branch, commit: parent } });
       await notifyReviewers(saved, manifest.branch, parent, req.user.id);
+      await scheduleWorkflows(saved, { branch: manifest.branch, commitHash: parent, actor: req.user.id });
       return res.status(201).json({ message: "Push completed successfully", branch: manifest.branch, head: parent, commitsCreated: commitDocuments.length, filesUploaded: uploadByHash.size });
     } catch (error) {
       return res.status(error.status || 500).json({ error: error.status ? error.message : "Unable to push commits", ...(error.code ? { code: error.code } : {}), ...(error.remoteHead !== undefined ? { remoteHead: error.remoteHead } : {}), ...(error.suggestedAction ? { suggestedAction: error.suggestedAction } : {}) });

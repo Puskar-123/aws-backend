@@ -72,23 +72,39 @@ function normalizeWeekRows(rows) {
 }
 const commitMatch = (repositoryId, range, branch) => ({ _id: repositoryId, "commits.time": { $gte: range.from, $lte: range.to }, ...(branch ? { "commits.branch": branch } : {}) });
 
-async function getOverview({ Repository, Issue, PullRequest, Tag, Release, repository, range }) {
-  const [commitRows, issueRows, pullRows, tagCount, releaseRows] = await Promise.all([
+async function getOverview({ Repository, Issue, PullRequest, Tag, Release, WorkflowRun, repository, range }) {
+  const [commitRows, issueRows, pullRows, tagCount, releaseRows, workflowRows] = await Promise.all([
     Repository.aggregate([{ $match: { _id: repository._id } }, { $unwind: "$commits" }, { $match: { "commits.time": { $gte: range.from, $lte: range.to } } }, { $group: { _id: null, commits: { $sum: 1 }, contributors: { $addToSet: { $ifNull: ["$commits.author.name", "Unknown contributor"] } } } }]),
     Issue.aggregate([{ $match: { repository: repository._id } }, { $group: { _id: "$status", count: { $sum: 1 } } }]),
     PullRequest.aggregate([{ $match: { repository: repository._id } }, { $group: { _id: "$status", count: { $sum: 1 } } }]),
     Tag ? Tag.countDocuments({ repository: repository._id }) : 0,
     Release ? Release.aggregate([{ $match: { repository: repository._id, draft: false } }, { $group: { _id: "$prerelease", count: { $sum: 1 } } }]) : [],
+    WorkflowRun ? WorkflowRun.aggregate([{ $match: { repository: repository._id, createdAt: { $gte: range.from, $lte: range.to } } }, { $group: { _id: "$status", count: { $sum: 1 } } }]) : [],
   ]);
   const issues = Object.fromEntries(issueRows.map((row) => [row._id, row.count])); const pulls = Object.fromEntries(pullRows.map((row) => [row._id, row.count]));
   const releaseCounts = Object.fromEntries(releaseRows.map((row) => [String(row._id), row.count]));
+  const workflowCounts = Object.fromEntries(workflowRows.map((row) => [String(row._id), row.count]));
   return { repository: { _id: repository._id, name: repository.name, owner: repository.owner }, summary: {
     commits: commitRows[0]?.commits || 0, contributors: commitRows[0]?.contributors?.length || 0,
     branches: repository.branches?.length || 0, openIssues: issues.open || 0, closedIssues: issues.closed || 0,
     openPullRequests: pulls.open || 0, closedPullRequests: pulls.closed || 0, mergedPullRequests: pulls.merged || 0,
     stars: repository.stars?.length || 0, forks: repository.forks?.length || 0, watchers: repository.watchers?.length || 0,
     ...(Tag || Release ? { tags: tagCount, releases: (releaseCounts.false || 0) + (releaseCounts.true || 0), prereleases: releaseCounts.true || 0 } : {}),
+    ...(WorkflowRun ? { workflowRuns: workflowRows.reduce((sum, row) => sum + row.count, 0), successfulWorkflowRuns: workflowCounts.success || 0, failedWorkflowRuns: workflowCounts.failure || 0 } : {}),
   }, range: range.key, timezone: range.timezone, socialHistoryAvailable: false };
+}
+
+async function getWorkflowAnalytics({ WorkflowRun, repository, range }) {
+  const rows = await WorkflowRun.aggregate([{ $match: { repository: repository._id, createdAt: { $gte: range.from, $lte: range.to } } }, { $facet: {
+    statuses: [{ $group: { _id: "$status", count: { $sum: 1 }, averageDurationMs: { $avg: "$durationMs" } } }],
+    series: [{ $group: { _id: dateGroupExpression(range.interval, "$createdAt"), runs: { $sum: 1 }, failures: { $sum: { $cond: [{ $eq: ["$status", "failure"] }, 1, 0] } } } }, { $sort: { _id: 1 } }],
+    failing: [{ $match: { status: "failure" } }, { $group: { _id: "$workflowName", failures: { $sum: 1 } } }, { $sort: { failures: -1, _id: 1 } }, { $limit: 1 }],
+  } }]);
+  const result = rows[0] || { statuses: [], series: [], failing: [] }; const counts = Object.fromEntries(result.statuses.map((row) => [row._id, row.count]));
+  const total = result.statuses.reduce((sum, row) => sum + row.count, 0); const completed = (counts.success || 0) + (counts.failure || 0);
+  const durations = result.statuses.filter((row) => Number.isFinite(row.averageDurationMs));
+  const averageDurationMs = durations.length ? Math.round(durations.reduce((sum, row) => sum + row.averageDurationMs * row.count, 0) / durations.reduce((sum, row) => sum + row.count, 0)) : null;
+  return { summary: { total, success: counts.success || 0, failure: counts.failure || 0, cancelled: counts.cancelled || 0, timedOut: counts.timed_out || 0, queued: counts.queued || 0, running: counts.running || 0, successRate: completed ? Number(((counts.success || 0) * 100 / completed).toFixed(1)) : null, averageDurationMs }, series: result.series, mostFrequentlyFailingWorkflow: result.failing[0] ? { name: result.failing[0]._id, failures: result.failing[0].failures } : null, interval: range.interval, range: range.key };
 }
 
 async function getCommitActivity({ Repository, repository, range, branch }) {
@@ -186,4 +202,4 @@ async function getMostChangedFiles({ Repository, repository, range, query }) {
   return { files: rows.filter((row) => safeAnalyticsPath(row._id)).slice(0, limit).map((row) => ({ path: row._id, changes: row.changes, additions: null, deletions: null, lastChangedAt: row.lastChangedAt })), additionsAvailable: false, deletionsAvailable: false, range: range.key };
 }
 
-module.exports = { RANGE_DAYS, MAX_CUSTOM_DAYS, insightError, parseRange, parsePagination, fillSeries, getOverview, getCommitActivity, getContributors, getLanguages, getBranchAnalytics, getIssueAnalytics, getPullRequestAnalytics, getRecentActivity, getMostChangedFiles, safeAnalyticsPath, idOf };
+module.exports = { RANGE_DAYS, MAX_CUSTOM_DAYS, insightError, parseRange, parsePagination, fillSeries, getOverview, getCommitActivity, getContributors, getLanguages, getBranchAnalytics, getIssueAnalytics, getPullRequestAnalytics, getRecentActivity, getMostChangedFiles, getWorkflowAnalytics, safeAnalyticsPath, idOf };

@@ -5,7 +5,7 @@ function safeRule(rule) {
   const value = rule?.toObject ? rule.toObject() : rule;
   return {
     branch: value.branch, enabled: value.enabled !== false,
-    rules: Object.fromEntries([...BOOLEAN_FIELDS.filter((field) => field !== "enabled").map((field) => [field, Boolean(value[field])]), ["requiredApprovals", value.requiredApprovals]]),
+    rules: Object.fromEntries([...BOOLEAN_FIELDS.filter((field) => field !== "enabled").map((field) => [field, Boolean(value[field])]), ["requiredApprovals", value.requiredApprovals], ["requiredStatusChecks", [...(value.requiredStatusChecks || [])]]]),
     createdAt: value.createdAt || null, updatedAt: value.updatedAt || null,
   };
 }
@@ -22,6 +22,11 @@ function validatedInput(body, { requireBranch = true } = {}) {
     if (body[field] === undefined) continue;
     if (typeof body[field] !== "boolean") throw Object.assign(new Error(`${field} must be a boolean`), { status: 400 });
     input[field] = body[field];
+  }
+  if (body.requiredStatusChecks !== undefined) {
+    if (!Array.isArray(body.requiredStatusChecks) || body.requiredStatusChecks.length > 20) throw Object.assign(new Error("requiredStatusChecks must be an array of at most 20 check names"), { status: 400 });
+    input.requiredStatusChecks = [...new Set(body.requiredStatusChecks.map((item) => String(item).trim()).filter(Boolean))];
+    if (input.requiredStatusChecks.some((item) => item.length > 300)) throw Object.assign(new Error("Required check names cannot exceed 300 characters"), { status: 400 });
   }
   return input;
 }

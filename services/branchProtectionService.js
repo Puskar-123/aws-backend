@@ -1,11 +1,13 @@
 const { validateBranchName } = require("../utils/branches");
 const { getRepositoryRole } = require("./repositoryPermissionService");
 const { getLatestReviewsByReviewer, getReviewMergeStatus } = require("./pullRequestReviewService");
+const CheckRun = require("../models/checkRunModel");
 
 const BOOLEAN_FIELDS = [
   "enabled", "requirePullRequest", "blockDirectCommits", "blockForcePush",
   "blockDeletion", "requireResolvedConversations", "dismissStaleApprovals",
   "allowOwnerBypass", "allowMaintainerBypass",
+  "requireStatusChecks", "requireUpToDate",
 ];
 const idOf = (value) => String(value?._id || value?.id || value || "");
 
@@ -98,6 +100,27 @@ function assertCanMergePullRequest(repository, pullRequest, currentHead) {
   return summary;
 }
 
+async function evaluateRequiredStatusChecks(repository, pullRequest, currentHead, userId, { CheckModel = CheckRun } = {}) {
+  const protection = getBranchProtection(repository, pullRequest.baseBranch);
+  const required = [...new Set((protection?.requiredStatusChecks || []).map((item) => String(item).trim()).filter(Boolean))];
+  if (!protection?.requireStatusChecks || !required.length) return { required, passed: true, checks: [], canBypass: false };
+  if (canBypassProtection(repository, userId, protection)) return { required, passed: true, checks: [], canBypass: true };
+  const rows = await CheckModel.find({ pullRequest: pullRequest._id, commitHash: String(currentHead || ""), name: { $in: required } }).sort({ createdAt: -1 }).lean();
+  const latest = new Map(); rows.forEach((row) => { if (!latest.has(row.name)) latest.set(row.name, row); });
+  const checks = required.map((name) => {
+    const check = latest.get(name);
+    const state = !check ? "missing" : (check.status !== "completed" ? "pending" : check.conclusion);
+    return { name, state, passed: state === "success", workflowRun: check?.workflowRun || null };
+  });
+  return { required, passed: checks.every((item) => item.passed), checks, canBypass: false };
+}
+
+async function assertRequiredStatusChecks(repository, pullRequest, currentHead, userId, dependencies) {
+  const result = await evaluateRequiredStatusChecks(repository, pullRequest, currentHead, userId, dependencies);
+  if (!result.passed) throw protectionError(409, "Required status checks have not passed.", "CHECKS_NOT_PASSED", { checks: result.checks });
+  return result;
+}
+
 function getProtectionSummary(repository, branchName, userId) {
   const protection = getBranchProtection(repository, branchName);
   if (!protection) return { protected: false, canBypass: false };
@@ -114,6 +137,9 @@ function getProtectionSummary(repository, branchName, userId) {
     requireResolvedConversations: Boolean(protection.requireResolvedConversations),
     allowOwnerBypass: Boolean(protection.allowOwnerBypass),
     allowMaintainerBypass: Boolean(protection.allowMaintainerBypass),
+    requireStatusChecks: Boolean(protection.requireStatusChecks),
+    requiredStatusChecks: [...(protection.requiredStatusChecks || [])],
+    requireUpToDate: Boolean(protection.requireUpToDate),
   };
 }
 
@@ -121,4 +147,5 @@ module.exports = {
   BOOLEAN_FIELDS, protectionError, getBranchProtection, isBranchProtected,
   canBypassProtection, assertCanDirectWrite, assertCanDeleteBranch,
   evaluateMergeProtection, assertCanMergePullRequest, getProtectionSummary, latestReviews,
+  evaluateRequiredStatusChecks, assertRequiredStatusChecks,
 };

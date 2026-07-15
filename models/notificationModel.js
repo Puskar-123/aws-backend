@@ -10,6 +10,7 @@ const TYPES = [
   "review_requested", "review_comment", "review_reply", "review_submitted",
   "review_conversation_reopened", "review_required_again",
   "release_published",
+  "workflow_failed", "workflow_recovered",
 ];
 
 const NotificationSchema = new Schema({

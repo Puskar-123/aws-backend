@@ -20,8 +20,9 @@ const { validateBranchName } = require("../utils/branches");
 const { getAuthenticatedUserId, requireAuthenticatedUser } = require("../utils/authUser");
 const { createNotification, safeNotifyRepositoryWatchers } = require("../services/notificationService");
 const { hasRepositoryPermission } = require("../services/repositoryPermissionService");
-const { assertCanMergePullRequest, evaluateMergeProtection } = require("../services/branchProtectionService");
+const { assertCanMergePullRequest, evaluateMergeProtection, assertRequiredStatusChecks, evaluateRequiredStatusChecks } = require("../services/branchProtectionService");
 const { getEffectiveReviewSummary, getRequestedReviewerStatus, threadIsOutdated } = require("../services/pullRequestReviewService");
+const { safeSchedulePullRequestWorkflows } = require("../services/workflowEventService");
 
 const safeAuthorFields = "_id username name avatarUrl";
 
@@ -29,7 +30,7 @@ function sendError(res, error) {
   if (!error.status) console.error("Pull request operation failed:", error.message);
   const body = { error: error.status ? error.message : "Pull request operation failed" };
   if (error.conflicts) body.conflicts = error.conflicts;
-  for (const field of ["code", "required", "current", "unresolvedCount"]) if (error[field] !== undefined) body[field] = error[field];
+  for (const field of ["code", "required", "current", "unresolvedCount", "checks"]) if (error[field] !== undefined) body[field] = error[field];
   return res.status(error.status || 500).json(body);
 }
 
@@ -63,6 +64,7 @@ function createPullRequestController({
   bucket = S3_BUCKET,
   notify = safeNotifyRepositoryWatchers,
   notifyUser = createNotification,
+  scheduleWorkflows = safeSchedulePullRequestWorkflows,
 } = {}) {
   const compareLive = (repository, base, compareBranch) => compare(repository, base, compareBranch, { s3: storage, bucket });
 
@@ -125,6 +127,7 @@ function createPullRequestController({
         eventKey: `pr-open:${pullRequest._id || pullRequest.number}`,
         metadata: { pullRequest: pullRequest._id, number: pullRequest.number },
       });
+      await scheduleWorkflows(repository, pullRequest, authenticatedUser._id);
       return res.status(201).json({ message: "Pull request created successfully", pullRequest: pullObject(pullRequest) });
     } catch (error) { return sendError(res, error); }
   }
@@ -185,6 +188,9 @@ function createPullRequestController({
       };
       const protection = evaluateMergeProtection(req.repository, pullRequest, currentCompareHead);
       const authenticatedUserId = getAuthenticatedUserId(req);
+      const statusChecks = await evaluateRequiredStatusChecks(req.repository, pullRequest, currentCompareHead, authenticatedUserId);
+      protection.statusChecks = statusChecks;
+      protection.requirementsPassed = protection.requirementsPassed && statusChecks.passed;
       const safePullRequest = pullObject(pullRequest);
       safePullRequest.reviewThreads = (safePullRequest.reviewThreads || []).map((thread) => ({ ...thread, outdated: threadIsOutdated(thread, currentCompareHead) }));
       return res.json({
@@ -213,7 +219,7 @@ function createPullRequestController({
           branchProtection: protection,
           reason: pullRequest.status !== "open"
             ? `Pull request is ${pullRequest.status}`
-            : (!hasChanges ? "Branches have no changes" : (hasConflicts ? "Pull request has merge conflicts" : (reviews.blocking || protection.changesRequested ? "Pull request cannot be merged while changes are requested." : (!protection.requirementsPassed ? (protection.requireResolvedConversations && protection.unresolvedConversations > 0 ? `Resolve ${protection.unresolvedConversations} review conversation${protection.unresolvedConversations === 1 ? "" : "s"} before merging.` : `Pull request requires ${protection.requiredApprovals} approval${protection.requiredApprovals === 1 ? "" : "s"} before merging.`) : null)))),
+            : (!hasChanges ? "Branches have no changes" : (hasConflicts ? "Pull request has merge conflicts" : (reviews.blocking || protection.changesRequested ? "Pull request cannot be merged while changes are requested." : (!statusChecks.passed ? "Required status checks have not passed." : (!protection.requirementsPassed ? (protection.requireResolvedConversations && protection.unresolvedConversations > 0 ? `Resolve ${protection.unresolvedConversations} review conversation${protection.unresolvedConversations === 1 ? "" : "s"} before merging.` : `Pull request requires ${protection.requiredApprovals} approval${protection.requiredApprovals === 1 ? "" : "s"} before merging.`) : null))))),
         },
       });
     } catch (error) { return sendError(res, error); }
@@ -293,6 +299,7 @@ function createPullRequestController({
       const effectiveReviews = getEffectiveReviewSummary(req.repository, pullRequest, currentCompareHead);
       if (effectiveReviews.blocking) throw httpError(409, "Merge blocked by requested changes");
       assertCanMergePullRequest(req.repository, pullRequest, currentCompareHead);
+      await assertRequiredStatusChecks(req.repository, pullRequest, currentCompareHead, authenticatedUser._id);
       const finalComparison = comparisonSnapshot(comparison);
       const commit = createMergeCommit(req.repository, pullRequest, comparison, String(authenticatedUser._id));
       await req.repository.save();

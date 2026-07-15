@@ -10,6 +10,7 @@ const { isDefaultIgnoredRepoPath, isSensitiveRepoPath, normalizeRepoPath } = req
 const { detectRepositoryLanguage } = require("../services/repositoryLanguageService");
 const { assertCanDirectWrite } = require("../services/branchProtectionService");
 const { notifyReviewersOfNewHead } = require("../services/reviewNotificationService");
+const { safeScheduleCommitWorkflows } = require("../services/workflowEventService");
 
 const COMMIT_METADATA = "commit.json";
 
@@ -235,6 +236,7 @@ async function pushRepo(req, res) {
     // Existing commit history must not be rebuilt or overwritten by push.
     await repo.save();
     await notifyReviewersOfNewHead(repo, branchName, branch.head, req.user?.id);
+    await safeScheduleCommitWorkflows(repo, { branch: branchName, commitHash: branch.head, actor: req.user?.id });
 
     return res.json({
       message: "Upload complete",

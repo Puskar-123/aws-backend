@@ -4,6 +4,7 @@ const ACTIONS = [
   "commit", "delete_branch", "manage_issues", "manage_settings",
   "manage_collaborators", "manage_branch_protection", "delete_repository", "change_visibility",
   "manage_tags", "manage_releases",
+  "manage_workflows",
 ];
 
 const PERMISSIONS = {
@@ -11,7 +12,7 @@ const PERMISSIONS = {
   maintainer: new Set([
     "view", "download", "create_issue", "comment_issue", "create_pr", "review_pr",
     "merge_pr", "create_branch", "write_files", "delete_files", "rename_files",
-    "commit", "delete_branch", "manage_issues", "manage_tags", "manage_releases",
+    "commit", "delete_branch", "manage_issues", "manage_tags", "manage_releases", "manage_workflows",
   ]),
   write: new Set([
     "view", "download", "create_issue", "comment_issue", "create_pr", "review_pr",
@@ -64,6 +65,7 @@ function permissionSummary(repository, userId) {
       canChangeVisibility: has("change_visibility"),
       canManageTags: has("manage_tags"),
       canManageReleases: has("manage_releases"),
+      canManageWorkflows: has("manage_workflows"),
     },
   };
 }

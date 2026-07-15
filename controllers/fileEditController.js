@@ -10,6 +10,7 @@ const { isSensitiveRepoPath, normalizeRepoPath } = require("../utils/repoPath");
 const { detectRepositoryLanguage } = require("../services/repositoryLanguageService");
 const { assertCanDirectWrite } = require("../services/branchProtectionService");
 const { notifyReviewersOfNewHead } = require("../services/reviewNotificationService");
+const { safeScheduleCommitWorkflows } = require("../services/workflowEventService");
 const { hasRepositoryPermission } = require("../services/repositoryPermissionService");
 
 const MAX_EDIT_BYTES = 512 * 1024;
@@ -257,6 +258,7 @@ function createFileEditController({
         metadata: { commit: commitHash, branch: value.branchName },
       });
       await notifyReviewersOfNewHead(savedRepository, value.branchName, commitHash, req.user.id);
+      await safeScheduleCommitWorkflows(savedRepository, { branch: value.branchName, commitHash, actor: req.user.id });
       return res.json({
         message: "File updated successfully",
         file: { path: value.filePath, branch: value.branchName },

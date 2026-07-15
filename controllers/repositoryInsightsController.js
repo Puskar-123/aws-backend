@@ -4,6 +4,7 @@ const Issue = require("../models/issueModel");
 const PullRequest = require("../models/pullRequestModel");
 const Tag = require("../models/tagModel");
 const Release = require("../models/releaseModel");
+const WorkflowRun = require("../models/workflowRunModel");
 const { canViewRepository } = require("../services/repositoryPermissionService");
 const insights = require("../services/repositoryInsightsService");
 
@@ -13,14 +14,14 @@ function sendError(res, error) {
   return res.status(error.status || 500).json({ error: error.status ? error.message : "Unable to load repository insights" });
 }
 
-function createRepositoryInsightsController({ RepositoryModel = Repository, IssueModel = Issue, PullRequestModel = PullRequest, TagModel = null, ReleaseModel = null } = {}) {
+function createRepositoryInsightsController({ RepositoryModel = Repository, IssueModel = Issue, PullRequestModel = PullRequest, TagModel = null, ReleaseModel = null, WorkflowRunModel = null } = {}) {
   async function context(req) {
     if (!mongoose.Types.ObjectId.isValid(req.params.id)) throw insights.insightError(400, "Invalid repository ID");
     const repository = await RepositoryModel.findById(req.params.id).select(repositoryFields).populate("owner", "_id username name avatarUrl").lean();
     if (!repository) throw insights.insightError(404, "Repository not found");
     const userId = String(req.user?.id || "");
     if (!canViewRepository(repository, userId)) throw insights.insightError(userId ? 403 : 401, userId ? "You do not have access to this repository" : "Authentication required");
-    return { Repository: RepositoryModel, Issue: IssueModel, PullRequest: PullRequestModel, Tag: TagModel, Release: ReleaseModel, repository, range: insights.parseRange(req.query), query: req.query || {} };
+    return { Repository: RepositoryModel, Issue: IssueModel, PullRequest: PullRequestModel, Tag: TagModel, Release: ReleaseModel, WorkflowRun: WorkflowRunModel, repository, range: insights.parseRange(req.query), query: req.query || {} };
   }
   const endpoint = (handler) => async (req, res) => { try { return res.json(await handler(await context(req), req)); } catch (error) { return sendError(res, error); } };
   return {
@@ -33,7 +34,8 @@ function createRepositoryInsightsController({ RepositoryModel = Repository, Issu
     pullRequests: endpoint((ctx) => insights.getPullRequestAnalytics(ctx)),
     activity: endpoint((ctx) => insights.getRecentActivity(ctx)),
     files: endpoint((ctx) => insights.getMostChangedFiles(ctx)),
+    actions: endpoint((ctx) => insights.getWorkflowAnalytics(ctx)),
   };
 }
 
-module.exports = { createRepositoryInsightsController, ...createRepositoryInsightsController({ TagModel: Tag, ReleaseModel: Release }) };
+module.exports = { createRepositoryInsightsController, ...createRepositoryInsightsController({ TagModel: Tag, ReleaseModel: Release, WorkflowRunModel: WorkflowRun }) };
