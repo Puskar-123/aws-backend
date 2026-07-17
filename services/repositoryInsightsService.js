@@ -4,7 +4,7 @@ const { isProtectedDiffPath } = require("./diffService");
 const { isDefaultIgnoredRepoPath, normalizeRepoPath } = require("../utils/repoPath");
 const { validateBranchName } = require("../utils/branches");
 
-const RANGE_DAYS = { "7d": 7, "30d": 30, "90d": 90, "1y": 365 };
+const RANGE_DAYS = { "7d": 7, "30d": 30, "90d": 90, "180d": 180, "1y": 365 };
 const MAX_CUSTOM_DAYS = 3650;
 const idOf = (value) => String(value?._id || value?.id || value || "");
 const startOfUtcDay = (value) => new Date(Date.UTC(value.getUTCFullYear(), value.getUTCMonth(), value.getUTCDate()));
@@ -27,10 +27,10 @@ function parseRange(query = {}, now = new Date()) {
     if ((to - from) / 86400000 > MAX_CUSTOM_DAYS) throw insightError(400, `Custom ranges cannot exceed ${MAX_CUSTOM_DAYS} days`);
     return { key: "custom", from, to, interval: (to - from) / 86400000 <= 31 ? "day" : (to - from) / 86400000 <= 366 ? "week" : "month", timezone: "UTC" };
   }
-  if (range !== "all" && !RANGE_DAYS[range]) throw insightError(400, "Range must be 7d, 30d, 90d, 1y, or all");
+  if (range !== "all" && !RANGE_DAYS[range]) throw insightError(400, "Range must be 7d, 30d, 90d, 180d, 1y, or all");
   to = now;
   from = range === "all" ? new Date(0) : new Date(startOfUtcDay(now).getTime() - (RANGE_DAYS[range] - 1) * 86400000);
-  const interval = ["7d", "30d"].includes(range) ? "day" : (["90d", "1y"].includes(range) ? "week" : "month");
+  const interval = ["7d", "30d"].includes(range) ? "day" : (["90d", "180d", "1y"].includes(range) ? "week" : "month");
   return { key: range, from, to, interval, timezone: "UTC" };
 }
 function parsePagination(query = {}, defaultLimit = 20, maximum = 100) {
@@ -202,4 +202,4 @@ async function getMostChangedFiles({ Repository, repository, range, query }) {
   return { files: rows.filter((row) => safeAnalyticsPath(row._id)).slice(0, limit).map((row) => ({ path: row._id, changes: row.changes, additions: null, deletions: null, lastChangedAt: row.lastChangedAt })), additionsAvailable: false, deletionsAvailable: false, range: range.key };
 }
 
-module.exports = { RANGE_DAYS, MAX_CUSTOM_DAYS, insightError, parseRange, parsePagination, fillSeries, getOverview, getCommitActivity, getContributors, getLanguages, getBranchAnalytics, getIssueAnalytics, getPullRequestAnalytics, getRecentActivity, getMostChangedFiles, getWorkflowAnalytics, safeAnalyticsPath, idOf };
+module.exports = { RANGE_DAYS, MAX_CUSTOM_DAYS, insightError, parseRange, parsePagination, fillSeries, getOverview, getCommitActivity, getContributors, getLanguages, getBranchAnalytics, getIssueAnalytics, getPullRequestAnalytics, getRecentActivity, getMostChangedFiles, getWorkflowAnalytics, safeAnalyticsPath, idOf, health: require("./repositoryHealthService") };

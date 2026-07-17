@@ -1,5 +1,9 @@
 # CodeHub backend
 
+## Project Health Score
+
+`GET /repo/:id/insights/health?range=30d` returns the authorized evidence-based score for 30, 90, or 180 days without executing repository code.
+
 Node.js/Express/Mongoose backend for CodeHub. Repository authorization is centralized in `services/repositoryPermissionService.js`; built-in roles and permissions are defined once in `constants/repositoryPermissions.js`.
 
 Run tests with `npm test`. Repository-role migration is manual only:

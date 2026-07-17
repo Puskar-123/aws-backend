@@ -2,7 +2,7 @@ const mongoose = require("mongoose");
 const { Schema } = mongoose;
 const ACTIONS = ["member_invited", "member_joined", "role_changed", "access_changed",
   "temporary_access_extended", "temporary_access_revoked", "temporary_access_expired",
-  "member_suspended", "member_reactivated", "member_removed", "legacy_member_migrated"];
+  "member_suspended", "member_reactivated", "member_removed", "legacy_member_migrated", "owner_duplicate_normalized"];
 const RepositoryRoleAuditSchema = new Schema({
   repository: { type: Schema.Types.ObjectId, ref: "Repository", required: true },
   targetUser: { type: Schema.Types.ObjectId, ref: "User", required: true },

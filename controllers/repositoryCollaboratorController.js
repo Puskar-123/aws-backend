@@ -9,6 +9,7 @@ const { getRepositoryRole, hasRepositoryPermission, resolveRepositoryPermissionC
 const { REPOSITORY_ROLES, ROLE_PERMISSION_MAP, ROLE_DESCRIPTIONS } = require("../constants/repositoryPermissions");
 const { validateRepositoryRole, validateAccessConfiguration, assertActorCanAssign, createAudit,
   updateMembership, removeMembership, cleanText } = require("../services/repositoryMemberService");
+const { normalizeRepositoryMembers } = require("../services/repositoryMemberNormalizationService");
 
 const ROLES = new Set(["maintainer", "write", "read"]);
 const idOf = (value) => String(value?._id || value?.id || value || "");
@@ -63,6 +64,7 @@ function sendError(res, error) {
   if (error?.code === 11000) return res.status(409).json({ error: "DUPLICATE_MEMBERSHIP", message: "A pending invitation or repository membership already exists" });
   return res.status(error.status || 500).json({ error: error.code || "MEMBER_MANAGEMENT_ERROR", message: error.status ? error.message : "Unable to manage collaborators" });
 }
+function ownerProtected(res) { return res.status(400).json({ success: false, error: "OWNER_PROTECTED", message: "The repository owner cannot be modified through collaborator APIs" }); }
 
 async function invite(req, res) {
   try {
@@ -84,7 +86,7 @@ async function invite(req, res) {
     if (!invitedUser) return res.status(404).json({ error: "User not found" });
     const ownerId = idOf(repository.owner);
     const invitedId = idOf(invitedUser);
-    if (invitedId === ownerId) return res.status(400).json({ error: "The repository owner cannot be invited" });
+    if (invitedId === ownerId) return ownerProtected(res);
     if (invitedId === String(req.user.id)) return res.status(400).json({ error: "You cannot invite yourself" });
     if ((repository.collaborators || []).some((item) => idOf(item.user) === invitedId)
       || await RepositoryMember.exists({ repository: repository._id, user: invitedUser._id })) {
@@ -122,19 +124,22 @@ async function listCollaborators(req, res) {
       .populate("collaborators.user", "_id username name avatarUrl");
     const members = await RepositoryMember.find({ repository: repository._id })
       .populate("user", "_id username name avatarUrl").populate("invitedBy", "_id username name avatarUrl").lean();
-    const memberIds = new Set(members.map((member) => idOf(member.user)));
-    for (const item of repository.collaborators || []) if (!memberIds.has(idOf(item.user))) members.push({
-      user: item.user, role: ({ read: "viewer", write: "temporary_contributor" }[item.role] || item.role), status: "active",
-      invitedBy: item.addedBy, joinedAt: item.addedAt, migrationSource: `legacy_${item.role}`,
-      legacyIndefiniteAccess: item.role === "write", allowedBranches: [], accessExpiresAt: null,
-    });
+    const normalized = normalizeRepositoryMembers(repository, members, repository.collaborators);
     const canManage = ["owner", "maintainer"].includes(req.repositoryRole || getRepositoryRole(repository, req.user.id, req.repositoryMembership));
     return res.json({
       owner: safeUser(repository.owner),
       currentUserRole: req.repositoryRole || getRepositoryRole(repository, req.user.id, req.repositoryMembership),
       canManage,
-      collaborators: members.map((item) => ({
+      members: normalized.map((item) => ({
         _id: item._id, user: safeUser(item.user), role: item.role, status: item.status || "active",
+        isOwner: Boolean(item.isOwner),
+        allowedBranches: item.allowedBranches || [], accessStartsAt: item.accessStartsAt || null,
+        accessExpiresAt: item.accessExpiresAt || null, retainViewerAfterExpiry: Boolean(item.retainViewerAfterExpiry),
+        migrationSource: item.migrationSource || null, legacyIndefiniteAccess: Boolean(item.legacyIndefiniteAccess),
+        invitedBy: safeUser(item.invitedBy), joinedAt: item.joinedAt || item.addedAt,
+      })),
+      collaborators: normalized.filter((item) => !item.isOwner).map((item) => ({
+        _id: item._id, user: safeUser(item.user), role: item.role, status: item.status || "active", isOwner: false,
         allowedBranches: item.allowedBranches || [], accessStartsAt: item.accessStartsAt || null,
         accessExpiresAt: item.accessExpiresAt || null, retainViewerAfterExpiry: Boolean(item.retainViewerAfterExpiry),
         migrationSource: item.migrationSource || null, legacyIndefiniteAccess: Boolean(item.legacyIndefiniteAccess),
@@ -212,7 +217,7 @@ async function updateRole(req, res) {
   try {
     if (!validId(req.params.userId)) return res.status(400).json({ error: "Invalid user ID" });
     const role = validateRepositoryRole(req.body?.role);
-    if (idOf(req.repository.owner) === String(req.params.userId)) return res.status(400).json({ error: "The owner role cannot be changed" });
+    if (idOf(req.repository.owner) === String(req.params.userId)) return ownerProtected(res);
     const member = await RepositoryMember.findOne({ repository: req.repository._id, user: req.params.userId });
     const result = await updateMembership(member, { ...req.body, role }, { userId: req.user.id, role: req.repositoryRole });
     await createNotification({ recipient: req.params.userId, actor: req.user.id, repository: req.repository._id, type: "collaborator_role_changed", title: "Repository role changed", message: `Your role on ${req.repository.name} is now ${role}.`, url: `/repo/${req.repository._id}`, eventKey: `collaborator-role:${req.repository._id}:${req.params.userId}:${role}:${Date.now()}` });
@@ -225,7 +230,7 @@ async function updateRole(req, res) {
 async function remove(req, res) {
   try {
     if (!validId(req.params.userId)) return res.status(400).json({ error: "Invalid user ID" });
-    if (idOf(req.repository.owner) === String(req.params.userId)) return res.status(400).json({ error: "The repository owner cannot be removed" });
+    if (idOf(req.repository.owner) === String(req.params.userId)) return ownerProtected(res);
     const member = await RepositoryMember.findOne({ repository: req.repository._id, user: req.params.userId });
     await removeMembership(member, { userId: req.user.id, role: req.repositoryRole, reason: req.body?.reason });
     await createNotification({ recipient: req.params.userId, actor: req.user.id, repository: req.repository._id, type: "collaborator_removed", title: "Repository access removed", message: `You were removed from ${req.repository.name}.`, url: "/dashboard", eventKey: `collaborator-removed:${req.repository._id}:${req.params.userId}:${Date.now()}` });
@@ -261,6 +266,7 @@ function roles(_req, res) {
 async function updateAccess(req, res) {
   try {
     if (!validId(req.params.userId)) return res.status(400).json({ error: "Invalid user ID" });
+    if (idOf(req.repository.owner) === String(req.params.userId)) return ownerProtected(res);
     const member = await RepositoryMember.findOne({ repository: req.repository._id, user: req.params.userId });
     const result = await updateMembership(member, req.body || {}, { userId: req.user.id, role: req.repositoryRole });
     const summary = permissionSummary(req.repository, req.params.userId, result.member);

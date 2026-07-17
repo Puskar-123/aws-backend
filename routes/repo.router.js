@@ -36,11 +36,18 @@ const { requireRepositoryRead, requireRepositoryWrite } = repositoryAccess;
 const requireRepositoryPermission = repositoryAccess.requireRepositoryPermission
   || (() => requireRepositoryWrite);
 const { REPOSITORY_PERMISSIONS: P } = require("../constants/repositoryPermissions");
+const { invalidateRepositoryHealthCache } = require("../services/repositoryHealthService");
 const branchFromManifest = (req) => {
   try { return JSON.parse(String(req.body?.manifest || "")).branch || null; } catch { return null; }
 };
 
 const repoRouter = express.Router();
+repoRouter.use((req, res, next) => {
+  if (!["POST", "PUT", "PATCH", "DELETE"].includes(req.method)) return next();
+  const match = req.originalUrl.match(/\/repo\/([^/?]+)/);
+  if (match) res.on("finish", () => { if (res.statusCode < 400) invalidateRepositoryHealthCache(match[1]); });
+  return next();
+});
 const upload = multer({ dest: "uploads/" });
 const cliUpload = multer({ dest: "uploads/", limits: { fileSize: 25 * 1024 * 1024, files: 500, fields: 20 } });
 const receiveCliPush = (req, res, next) => cliUpload.array("files")(req, res, (error) => {
@@ -162,6 +169,7 @@ repoRouter.patch("/:id/pulls/:number/threads/:threadId/resolve", requireAuth, re
 repoRouter.patch("/:id/pulls/:number/threads/:threadId/reopen", requireAuth, requireRepositoryPermission(P.PULL_REVIEW), advancedReviewController.reopen);
 repoRouter.get("/:id/pulls/:number/merge-status", optionalAuth, requireRepositoryRead, advancedReviewController.mergeStatus);
 repoRouter.get("/:id/insights/overview", optionalAuth, requireRepositoryRead, repositoryInsightsController.overview);
+repoRouter.get("/:id/insights/health", optionalAuth, requireRepositoryRead, repositoryInsightsController.health);
 repoRouter.get("/:id/insights/commits", optionalAuth, requireRepositoryRead, repositoryInsightsController.commits);
 repoRouter.get("/:id/insights/contributors", optionalAuth, requireRepositoryRead, repositoryInsightsController.contributors);
 repoRouter.get("/:id/insights/languages", optionalAuth, requireRepositoryRead, repositoryInsightsController.languages);
