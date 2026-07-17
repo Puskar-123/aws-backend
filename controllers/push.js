@@ -11,6 +11,8 @@ const { detectRepositoryLanguage } = require("../services/repositoryLanguageServ
 const { assertCanDirectWrite } = require("../services/branchProtectionService");
 const { notifyReviewersOfNewHead } = require("../services/reviewNotificationService");
 const { safeScheduleCommitWorkflows } = require("../services/workflowEventService");
+const { pendingFor } = require("../utils/browserWorkflow");
+const { safeNotifyRepositoryWatchers } = require("../services/notificationService");
 
 const COMMIT_METADATA = "commit.json";
 
@@ -100,7 +102,21 @@ async function pushRepo(req, res) {
       repo.branches.push({ name: branchName, head: null, isDefault: false });
       branch = repo.branches.find((item) => item.name === branchName);
     }
-    let targetCommit = req.body?.head ? findCommit(repo, req.body.head) : null;
+    const pendingCommits = pendingFor(repo, req.user?.id, branchName);
+    const browserPendingMode = Boolean(req.user?.id);
+    if (browserPendingMode && !pendingCommits.length) {
+      return res.status(400).json({ error: "No pending commits to push" });
+    }
+    const expectedParent = pendingCommits[0]?.parent || null;
+    if (browserPendingMode && String(expectedParent || "") !== String(branch.head || "")) {
+      return res.status(409).json({
+        error: "The remote branch changed after this commit was created. Pull the latest changes before pushing.",
+        code: "REMOTE_CHANGED",
+      });
+    }
+    let targetCommit = browserPendingMode
+      ? pendingCommits.at(-1)
+      : (req.body?.head ? findCommit(repo, req.body.head) : null);
     let latestCommit;
     if (targetCommit?.storageId) {
       latestCommit = {
@@ -117,9 +133,7 @@ async function pushRepo(req, res) {
     if (!latestCommit) {
       return res.status(400).json({ error: "No commits to push" });
     }
-    if (!targetCommit) {
-      targetCommit = repo.commits.find((commit) => commit.storageId === latestCommit.id) || null;
-    }
+    if (!targetCommit) targetCommit = repo.commits.find((commit) => commit.storageId === latestCommit.id) || null;
 
     // Each commit directory is a full snapshot. Only the newest one is needed
     // to calculate the repository's current remote state.
@@ -230,16 +244,50 @@ async function pushRepo(req, res) {
       targetCommit.deletedFiles = deleted;
       if (!targetCommit.branch) targetCommit.branch = branchName;
     }
-    if (req.body?.head) branch.head = req.body.head;
+    const pushedAt = new Date();
+    const canonicalCommits = pendingCommits.map((pending) => ({
+      hash: pending.hash,
+      parent: pending.parent || null,
+      parents: pending.parents || (pending.parent ? [pending.parent] : []),
+      branch: pending.branch,
+      storageId: pending.storageId,
+      author: pending.author,
+      message: pending.message,
+      files: pending.files || [],
+      deletedFiles: pending.deletedFiles || [],
+      summary: pending.summary,
+      snapshot: pending.hash === targetCommit.hash ? targetCommit.snapshot : [],
+      time: pending.createdAt || pushedAt,
+    }));
+    if (browserPendingMode) {
+      repo.commits.push(...canonicalCommits);
+      pendingCommits.forEach((pending) => { pending.pushedAt = pushedAt; });
+      branch.head = targetCommit.hash;
+    }
     if (branchName === defaultBranch.name) repo.content = [...latestFiles.values()];
     if (branchName === defaultBranch.name) repo.language = detectRepositoryLanguage([...latestFiles.values()]);
     // Existing commit history must not be rebuilt or overwritten by push.
     await repo.save();
     await notifyReviewersOfNewHead(repo, branchName, branch.head, req.user?.id);
     await safeScheduleCommitWorkflows(repo, { branch: branchName, commitHash: branch.head, actor: req.user?.id });
+    await safeNotifyRepositoryWatchers(repo, {
+      actor: req.user?.id,
+      type: "commit",
+      title: `New commit in ${repo.name}`,
+      message: targetCommit.message,
+      url: `/repo/${id}?branch=${encodeURIComponent(branchName)}`,
+      eventKey: `commit:${id}:${targetCommit.hash}`,
+      metadata: { commit: targetCommit.hash, branch: branchName },
+    });
 
     return res.json({
-      message: "Upload complete",
+      message: "Push successful!",
+      branch: branchName,
+      localHead: targetCommit.hash,
+      remoteHead: targetCommit.hash,
+      aheadCount: 0,
+      behindCount: 0,
+      hasUnpushedCommits: false,
       files: repo.content,
       commits: repo.commits,
       uploaded,

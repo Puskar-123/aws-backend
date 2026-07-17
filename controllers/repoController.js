@@ -14,6 +14,7 @@ function withoutAccessLists(document) {
   delete value.watchers;
   delete value.forks;
   delete value.forkedBy;
+  delete value.pendingCommits;
   return value;
 }
 
@@ -197,6 +198,7 @@ async function fetchRepositoryById(req, res) {
     delete response.forkedBy;
     delete response.collaborators;
     delete response.branchProtections;
+    delete response.pendingCommits;
     if (protectedFiles.length) {
       response.warnings = [
         `${protectedFiles.length} protected file(s) are hidden. Previously uploaded secrets must be removed manually.`,

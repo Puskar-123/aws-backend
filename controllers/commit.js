@@ -3,9 +3,11 @@ const path = require("path");
 const { v4: uuidv4 } = require("uuid");
 const mongoose = require("mongoose");
 const Repository = require("../models/repoModel");
+const User = require("../models/userModel");
 const { validateBranchName } = require("../utils/branches");
 const { normalizeRepositoryPath } = require("../utils/paths");
 const { assertCanDirectWrite } = require("../services/branchProtectionService");
+const { commitsPath: workflowCommitsPath, listFiles, pendingFor, stagingPath: workflowStagingPath } = require("../utils/browserWorkflow");
 
 async function copyRecursive(src, dest) {
   const stat = await fs.stat(src);
@@ -30,19 +32,33 @@ async function commitRepo(repoId, message, metadata = {}) {
 
   const branch = validateBranchName(metadata.branch || "main");
   assertCanDirectWrite(repo, branch, metadata.authenticatedUserId, "commit");
+  const authenticatedUser = await User.findById(metadata.authenticatedUserId)
+    .select("_id username name email");
+  if (!authenticatedUser) {
+    const error = new Error("Authenticated user no longer exists");
+    error.status = 401;
+    throw error;
+  }
   if (!repo.branches?.length) {
     repo.branches = [{ name: "main", head: null, isDefault: true }];
   }
   const existingBranch = repo.branches.find((item) => item.name === branch);
-  const repoPath = path.resolve(process.cwd(), ".myGit", repoId);
-  const stagedPath = path.join(repoPath, "staging");
-  const commitsPath = path.join(repoPath, "commits");
+  const stagedPath = workflowStagingPath(repoId, authenticatedUser._id, branch);
+  const commitsPath = workflowCommitsPath(repoId);
+  const stagedFiles = await listFiles(stagedPath);
+  if (!stagedFiles.length) {
+    const error = new Error("No staged changes to commit");
+    error.status = 400;
+    throw error;
+  }
   const storageId = uuidv4();
   const commitDir = path.join(commitsPath, storageId);
   await fs.mkdir(commitDir, { recursive: true });
-  const parentCommit = existingBranch?.head
+  const userPending = pendingFor(repo, authenticatedUser._id, branch);
+  const pendingParent = userPending.at(-1) || null;
+  const parentCommit = pendingParent || (existingBranch?.head
     ? repo.commits.find((commit) => commit.hash === existingBranch.head || String(commit._id) === String(existingBranch.head))
-    : null;
+    : null);
   if (parentCommit?.storageId) {
     try {
       await copyRecursive(path.join(commitsPath, parentCommit.storageId), commitDir);
@@ -53,7 +69,7 @@ async function commitRepo(repoId, message, metadata = {}) {
   await copyRecursive(stagedPath, commitDir);
 
   const hash = /^[a-f0-9]{64}$/.test(metadata.hash || "") ? metadata.hash : storageId;
-  const inferredParent = existingBranch?.head ? safeString(existingBranch.head, "", 128) : "";
+  const inferredParent = parentCommit?.hash || (existingBranch?.head ? safeString(existingBranch.head, "", 128) : "");
   const parents = Array.isArray(metadata.parents)
     ? metadata.parents.map((parent) => safeString(parent, "", 128)).filter(Boolean).slice(0, 2)
     : (metadata.parent
@@ -63,8 +79,11 @@ async function commitRepo(repoId, message, metadata = {}) {
     ? new Date(metadata.time)
     : new Date();
   const author = {
-    name: safeString(metadata.author?.name, "Unknown", 100),
-    email: safeString(metadata.author?.email, "", 254),
+    user: authenticatedUser._id,
+    username: safeString(authenticatedUser.username, "", 100),
+    displayName: safeString(authenticatedUser.name, "", 100),
+    name: safeString(authenticatedUser.name || authenticatedUser.username, authenticatedUser.username, 100),
+    email: safeString(authenticatedUser.email, "", 254),
   };
 
   await fs.writeFile(path.join(commitDir, "commit.json"), JSON.stringify({
@@ -77,7 +96,7 @@ async function commitRepo(repoId, message, metadata = {}) {
     time: time.toISOString(),
   }, null, 2));
 
-  const changedFiles = Array.isArray(metadata.changedFiles)
+  const changedFiles = Array.isArray(metadata.changedFiles) && metadata.changedFiles.length
     ? metadata.changedFiles.map((file) => {
       const filePath = normalizeRepositoryPath(safeString(file.path, file.filename, 1000));
       return {
@@ -87,7 +106,7 @@ async function commitRepo(repoId, message, metadata = {}) {
       status: ["added", "modified", "deleted"].includes(file.status) ? file.status : undefined,
       };
     })
-    : [];
+    : stagedFiles.map((filePath) => ({ filename: path.basename(filePath), path: filePath, status: "added" }));
   const deletedFiles = Array.isArray(metadata.deletedFiles)
     ? metadata.deletedFiles.map((file) => normalizeRepositoryPath(safeString(file, "", 1000)))
     : [];
@@ -100,7 +119,8 @@ async function commitRepo(repoId, message, metadata = {}) {
     deletions: requestedSummary.deletions,
   } : undefined;
 
-  repo.commits.push({
+  if (!Array.isArray(repo.pendingCommits)) repo.pendingCommits = [];
+  repo.pendingCommits.push({
     hash,
     parent: parents[0] || null,
     parents,
@@ -111,17 +131,20 @@ async function commitRepo(repoId, message, metadata = {}) {
     files: changedFiles,
     deletedFiles,
     summary,
-    time,
+    createdAt: time,
+    pushedAt: null,
   });
-
-  let branchRef = repo.branches.find((item) => item.name === branch);
-  if (!branchRef) {
-    repo.branches.push({ name: branch, head: hash, isDefault: false });
-  } else {
-    branchRef.head = hash;
-  }
   await repo.save();
-  return { hash, storageId, branch };
+  await fs.rm(stagedPath, { recursive: true, force: true });
+  return {
+    hash, storageId, branch, parent: parents[0] || null, author,
+    localHead: hash,
+    remoteHead: existingBranch?.head || null,
+    aheadCount: userPending.length + 1,
+    behindCount: 0,
+    hasStagedChanges: false,
+    hasUnpushedCommits: true,
+  };
 }
 
 module.exports = { commitRepo };

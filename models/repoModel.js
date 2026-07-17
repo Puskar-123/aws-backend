@@ -83,6 +83,9 @@ const RepositorySchema = new Schema(
       branch: String,
       storageId: String,
       author: {
+        user: { type: Schema.Types.ObjectId, ref: "User" },
+        username: String,
+        displayName: String,
         name: String,
         email: String,
       },
@@ -98,6 +101,37 @@ const RepositorySchema = new Schema(
       },
     },
   ],
+
+  // Browser commits are private to the authenticated user until Push succeeds.
+  // Their immutable file snapshot remains in .myGit; this record makes the
+  // synchronization state survive browser refreshes and server restarts.
+  pendingCommits: [new Schema({
+    hash: { type: String, required: true },
+    parent: { type: String, default: null },
+    parents: [String],
+    branch: { type: String, required: true },
+    storageId: { type: String, required: true },
+    author: {
+      user: { type: Schema.Types.ObjectId, ref: "User", required: true },
+      username: { type: String, required: true },
+      displayName: String,
+      name: String,
+      email: String,
+    },
+    message: { type: String, required: true },
+    files: [{
+      filename: String, path: String, hash: String, status: String,
+      size: Number, contentType: String,
+    }],
+    snapshot: [{
+      filename: String, path: String, s3Key: String, storageKey: String,
+      hash: String, size: Number, contentType: String,
+    }],
+    deletedFiles: [String],
+    summary: { filesChanged: Number, additions: Number, deletions: Number },
+    createdAt: { type: Date, default: Date.now },
+    pushedAt: { type: Date, default: null },
+  }, { _id: true })],
 
   branches: [
     new Schema({

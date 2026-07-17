@@ -9,6 +9,7 @@ const { getFile } = require("../controllers/fileController");
 const { pullRepo } = require("../controllers/pull");
 const { getCommitHistory } = require("../controllers/historyController");
 const { getCommitDiff } = require("../controllers/diffController");
+const { getBrowserStatus } = require("../controllers/browserStatusController");
 const { previewFile } = require("../controllers/previewController");
 const { deleteFile, renameFile } = require("../controllers/fileManageController");
 const { listBranches, createBranch, deleteBranch } = require("../controllers/branchController");
@@ -157,6 +158,7 @@ repoRouter.post("/:id/pulls/:number/close", requireAuth, requireRepositoryRead, 
 repoRouter.post("/:id/pulls/:number/reopen", requireAuth, requireRepositoryRead, pullRequestController.reopen);
 repoRouter.get("/:id/branches", listBranches);
 repoRouter.post("/:id/branches", requireRepositoryWrite, createBranch);
+repoRouter.get("/:id/branches/:branchName/status", optionalAuth, requireRepositoryRead, getBrowserStatus);
 repoRouter.get("/:id/branches/:branchName/snapshot", getSnapshot);
 repoRouter.get("/:id/branches/:branchName/history", getCommitHistory);
 repoRouter.delete("/:id/branches/:branchName", deleteBranch);

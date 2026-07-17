@@ -6,7 +6,8 @@ async function addRepo(
   repoId,
   tempFilePath,
   originalFileName,
-  relativePath
+  relativePath,
+  workflow = {}
 ) {
   const repoPath = path.resolve(
     process.cwd(),
@@ -14,10 +15,7 @@ async function addRepo(
     repoId
   );
 
-  const stagingPath = path.join(
-    repoPath,
-    "staging"
-  );
+  const stagingPath = workflow.stagingPath || path.join(repoPath, "staging");
 
   try {
     const finalPath = normalizeRepositoryPath(relativePath || originalFileName);

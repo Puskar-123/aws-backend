@@ -3,6 +3,7 @@ const path = require("path");
 const { addRepo } = require("./add");
 const { assertCanDirectWrite } = require("../services/branchProtectionService");
 const { validateBranchName } = require("../utils/branches");
+const { stagingPath } = require("../utils/browserWorkflow");
 
 async function addFiles(req, res) {
   try {
@@ -29,7 +30,8 @@ async function addFiles(req, res) {
         repoId,
         req.files[i].path,
         req.files[i].originalname,
-        relativePath
+        relativePath,
+        { stagingPath: stagingPath(repoId, req.user?.id, branch) }
       );
     }
 
@@ -45,6 +47,8 @@ async function addFiles(req, res) {
     res.status(200).json({
       message: "Files added to staging area successfully!",
       totalFiles: req.files.length,
+      branch,
+      hasStagedChanges: true,
     });
   } catch (err) {
     console.error("Error staging files:", err);

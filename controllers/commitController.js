@@ -1,7 +1,4 @@
 const { commitRepo } = require("./commit");
-const { safeNotifyRepositoryWatchers } = require("../services/notificationService");
-const { notifyReviewersOfNewHead } = require("../services/reviewNotificationService");
-const { safeScheduleCommitWorkflows } = require("../services/workflowEventService");
 
 async function createCommit(req, res) {
   try {
@@ -15,21 +12,10 @@ async function createCommit(req, res) {
     }
 
     const commit = await commitRepo(id, message, { ...req.body, authenticatedUserId: req.user?.id });
-    await safeNotifyRepositoryWatchers(req.repository, {
-      actor: req.user?.id,
-      type: "commit",
-      title: `New commit in ${req.repository.name}`,
-      message,
-      url: `/repo/${id}?branch=${encodeURIComponent(commit.branch)}`,
-      eventKey: `commit:${id}:${commit.hash}`,
-      metadata: { commit: commit.hash, branch: commit.branch },
-    });
-    await notifyReviewersOfNewHead(req.repository, commit.branch, commit.hash, req.user?.id);
-    await safeScheduleCommitWorkflows(req.repository, { branch: commit.branch, commitHash: commit.hash, actor: req.user?.id });
-
     res.status(200).json({
-      message: "Commit created successfully!",
+      message: "Commit created locally. Push to publish it.",
       commit,
+      status: commit,
     });
   } catch (err) {
     console.error(err);
