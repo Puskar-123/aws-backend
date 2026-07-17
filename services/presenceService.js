@@ -1,0 +1,4 @@
+const User=require("../models/userModel"); const sockets=new Map(),timers=new Map();
+function connect(userId,socketId){const key=String(userId);clearTimeout(timers.get(key));timers.delete(key);const set=sockets.get(key)||new Set();set.add(socketId);sockets.set(key,set);return set.size;}
+function disconnect(userId,socketId,{delay=1500,onOffline=()=>{},UserModel=User}={}){const key=String(userId),set=sockets.get(key);if(!set)return;if(socketId)set.delete(socketId);if(set.size)return;timers.set(key,setTimeout(async()=>{if((sockets.get(key)?.size||0)>0)return;sockets.delete(key);timers.delete(key);const lastSeenAt=new Date();await UserModel.updateOne({_id:key},{$set:{lastSeenAt}}).catch(()=>{});onOffline({userId:key,lastSeenAt});},delay));}
+const isOnline=userId=>(sockets.get(String(userId))?.size||0)>0; const count=userId=>sockets.get(String(userId))?.size||0; module.exports={connect,disconnect,isOnline,count,sockets,timers};

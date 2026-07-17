@@ -29,6 +29,7 @@ const tagController = require("../controllers/tagController");
 const releaseController = require("../controllers/releaseController");
 const workflowController = require("../controllers/workflowController");
 const pullRequestTestResultController = require("../controllers/pullRequestTestResultController");
+const chatController = require("../controllers/chatController");
 const { workflowRateLimit } = require("../middleware/workflowRateLimit");
 const { optionalAuth, requireAuth } = require("../middleware/authMiddleware");
 const repositoryAccess = require("../utils/repositoryAccess");
@@ -99,6 +100,12 @@ repoRouter.get("/:id/permissions/me", optionalAuth, requireRepositoryRead, colla
 repoRouter.get("/:id/members/:userId/permissions", requireAuth, requireRepositoryPermission(P.MEMBER_VIEW), collaboratorController.memberPermissions);
 repoRouter.get("/:id/role-history", requireAuth, requireRepositoryPermission(P.MEMBER_VIEW_HISTORY), collaboratorController.history);
 repoRouter.get("/:id/role-history/:userId", requireAuth, requireRepositoryPermission(P.MEMBER_VIEW_HISTORY), collaboratorController.history);
+repoRouter.get("/:repoId/chat", requireAuth, chatController.repositoryChat);
+repoRouter.get("/:repoId/issues/:issueId/chat", requireAuth, chatController.issueChat);
+repoRouter.get("/:repoId/pulls/:pullRequestId/chat", requireAuth, chatController.pullChat);
+repoRouter.post("/:repoId/mentor-requests", requireAuth, chatController.mentorCreate);
+repoRouter.get("/:repoId/mentor-requests", requireAuth, chatController.mentorList);
+repoRouter.patch("/:repoId/mentor-requests/:requestId", requireAuth, chatController.mentorUpdate);
 
 // Tags and releases reference canonical embedded commits and stay before /:id.
 repoRouter.get("/:id/tags", optionalAuth, requireRepositoryRead, tagController.list);

@@ -8,6 +8,8 @@ Node.js/Express/Mongoose backend for CodeHub. Repository authorization is centra
 
 Run tests with `npm test`. Repository-role migration is manual only:
 
+CodeHub Chat shares the Express HTTP server through Socket.IO, persists conversations and messages in MongoDB, and enforces current repository access on REST and socket events. See `../docs/CODEHUB_CHAT.md` for APIs, privacy, attachment controls, Nginx configuration, testing, and limitations.
+
 ```powershell
 npm run migrate:repository-roles:dry
 npm run migrate:repository-roles

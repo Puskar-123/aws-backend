@@ -46,6 +46,7 @@ const UserSchema = new Schema(
     maxlength: 100,
     default: "",
   },
+  lastSeenAt: { type: Date, default: null },
   repositories: [
     {
       default: [],

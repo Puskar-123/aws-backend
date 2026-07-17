@@ -11,6 +11,7 @@ const TYPES = [
   "review_conversation_reopened", "review_required_again",
   "release_published",
   "workflow_failed", "workflow_recovered",
+  "chat_message", "mentor_request", "mentor_request_accepted", "mentor_request_declined", "chat_report_resolved",
 ];
 
 const NotificationSchema = new Schema({

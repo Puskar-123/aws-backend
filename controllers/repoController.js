@@ -385,6 +385,10 @@ async function deleteRepositoryById(req, res) {
       return res.status(404).json({ error: "Repository not found!" });
     }
 
+    if (Repository.db.readyState === 1) {
+      const { archiveRepositoryChat } = require("../services/chatLifecycleService");
+      await archiveRepositoryChat(repository._id);
+    }
     await repository.deleteOne();
     res.json({ message: "Repository deleted!" });
 

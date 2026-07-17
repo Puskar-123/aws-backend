@@ -10,6 +10,7 @@ const { REPOSITORY_ROLES, ROLE_PERMISSION_MAP, ROLE_DESCRIPTIONS } = require("..
 const { validateRepositoryRole, validateAccessConfiguration, assertActorCanAssign, createAudit,
   updateMembership, removeMembership, cleanText } = require("../services/repositoryMemberService");
 const { normalizeRepositoryMembers } = require("../services/repositoryMemberNormalizationService");
+const { revokeRepositoryChatAccess } = require("../sockets/socketServer");
 
 const ROLES = new Set(["maintainer", "write", "read"]);
 const idOf = (value) => String(value?._id || value?.id || value || "");
@@ -220,6 +221,7 @@ async function updateRole(req, res) {
     if (idOf(req.repository.owner) === String(req.params.userId)) return ownerProtected(res);
     const member = await RepositoryMember.findOne({ repository: req.repository._id, user: req.params.userId });
     const result = await updateMembership(member, { ...req.body, role }, { userId: req.user.id, role: req.repositoryRole });
+    await revokeRepositoryChatAccess(req.repository._id, req.params.userId);
     await createNotification({ recipient: req.params.userId, actor: req.user.id, repository: req.repository._id, type: "collaborator_role_changed", title: "Repository role changed", message: `Your role on ${req.repository.name} is now ${role}.`, url: `/repo/${req.repository._id}`, eventKey: `collaborator-role:${req.repository._id}:${req.params.userId}:${role}:${Date.now()}` });
     const summary = permissionSummary(req.repository, req.params.userId, result.member);
     return res.json({ message: "Collaborator role updated", member: result.member, effectiveRole: summary.role,
@@ -233,6 +235,7 @@ async function remove(req, res) {
     if (idOf(req.repository.owner) === String(req.params.userId)) return ownerProtected(res);
     const member = await RepositoryMember.findOne({ repository: req.repository._id, user: req.params.userId });
     await removeMembership(member, { userId: req.user.id, role: req.repositoryRole, reason: req.body?.reason });
+    await revokeRepositoryChatAccess(req.repository._id, req.params.userId);
     await createNotification({ recipient: req.params.userId, actor: req.user.id, repository: req.repository._id, type: "collaborator_removed", title: "Repository access removed", message: `You were removed from ${req.repository.name}.`, url: "/dashboard", eventKey: `collaborator-removed:${req.repository._id}:${req.params.userId}:${Date.now()}` });
     return res.json({ message: "Collaborator removed" });
   } catch (error) { return sendError(res, error); }
@@ -269,6 +272,7 @@ async function updateAccess(req, res) {
     if (idOf(req.repository.owner) === String(req.params.userId)) return ownerProtected(res);
     const member = await RepositoryMember.findOne({ repository: req.repository._id, user: req.params.userId });
     const result = await updateMembership(member, req.body || {}, { userId: req.user.id, role: req.repositoryRole });
+    await revokeRepositoryChatAccess(req.repository._id, req.params.userId);
     const summary = permissionSummary(req.repository, req.params.userId, result.member);
     return res.json({ message: "Repository access updated", member: result.member, effectiveRole: summary.role,
       status: summary.effectiveStatus, permissions: summary.permissionList, auditRecordId: result.audit?._id });
