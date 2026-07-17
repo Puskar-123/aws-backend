@@ -1,0 +1,3 @@
+const mongoose=require("mongoose"),{Schema}=mongoose,{EXPERIENCE_LEVELS,AVAILABLE_TIMES}=require("../constants/contributionConstants");
+const schema=new Schema({user:{type:Schema.Types.ObjectId,ref:"User",required:true,unique:true,index:true},experienceLevel:{type:String,enum:EXPERIENCE_LEVELS,required:true},skills:{type:[String],default:[]},preferredTaskTypes:{type:[String],default:[]},availableTime:{type:String,enum:AVAILABLE_TIMES,required:true},learningGoals:{type:[String],default:[]},visibility:{type:String,enum:["private","repository_maintainers","public"],default:"private"},completedContributionCount:{type:Number,default:0,min:0}},{timestamps:true});
+module.exports=mongoose.model("ContributorSkillProfile",schema);

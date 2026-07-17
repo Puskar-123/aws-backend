@@ -12,6 +12,7 @@ const TYPES = [
   "release_published",
   "workflow_failed", "workflow_recovered",
   "chat_message", "mentor_request", "mentor_request_accepted", "mentor_request_declined", "chat_report_resolved",
+  "contribution_started", "contribution_branch_approval", "contribution_completed",
 ];
 
 const NotificationSchema = new Schema({

@@ -30,6 +30,7 @@ const releaseController = require("../controllers/releaseController");
 const workflowController = require("../controllers/workflowController");
 const pullRequestTestResultController = require("../controllers/pullRequestTestResultController");
 const chatController = require("../controllers/chatController");
+const contributionController = require("../controllers/contributionController");
 const { workflowRateLimit } = require("../middleware/workflowRateLimit");
 const { optionalAuth, requireAuth } = require("../middleware/authMiddleware");
 const repositoryAccess = require("../utils/repositoryAccess");
@@ -106,6 +107,27 @@ repoRouter.get("/:repoId/pulls/:pullRequestId/chat", requireAuth, chatController
 repoRouter.post("/:repoId/mentor-requests", requireAuth, chatController.mentorCreate);
 repoRouter.get("/:repoId/mentor-requests", requireAuth, chatController.mentorList);
 repoRouter.patch("/:repoId/mentor-requests/:requestId", requireAuth, chatController.mentorUpdate);
+
+// Guided contribution APIs. These compose existing permissions, branches,
+// commits, pull requests, workflow evidence, notifications, and mentor chat.
+repoRouter.get("/:repoId/issues/:issueId/contribution-guide", optionalAuth, requireRepositoryRead, contributionController.getGuide);
+repoRouter.put("/:repoId/issues/:issueId/contribution-guide", requireAuth, requireRepositoryRead, contributionController.putGuide);
+repoRouter.delete("/:repoId/issues/:issueId/contribution-guide", requireAuth, requireRepositoryRead, contributionController.deleteGuide);
+repoRouter.get("/:repoId/contribution-recommendations", requireAuth, requireRepositoryRead, contributionController.recommendations);
+repoRouter.get("/:repoId/contribution-recommendations/:issueId", requireAuth, requireRepositoryRead, contributionController.recommendationDetails);
+repoRouter.post("/:repoId/contribution-sessions", requireAuth, requireRepositoryRead, contributionController.createSession);
+repoRouter.get("/:repoId/contribution-sessions", requireAuth, requireRepositoryRead, contributionController.listSessions);
+repoRouter.get("/:repoId/contribution-sessions/:sessionId", requireAuth, requireRepositoryRead, contributionController.sessionDetails);
+repoRouter.patch("/:repoId/contribution-sessions/:sessionId", requireAuth, requireRepositoryRead, contributionController.updateSession);
+repoRouter.delete("/:repoId/contribution-sessions/:sessionId", requireAuth, requireRepositoryRead, contributionController.abandonSession);
+repoRouter.post("/:repoId/contribution-sessions/:sessionId/branch", requireAuth, requireRepositoryRead, contributionController.createSessionBranch);
+repoRouter.post("/:repoId/contribution-sessions/:sessionId/validate", requireAuth, requireRepositoryRead, contributionController.validateSession);
+repoRouter.post("/:repoId/contribution-sessions/:sessionId/confirm-check", requireAuth, requireRepositoryRead, contributionController.confirmCheck);
+repoRouter.post("/:repoId/contribution-sessions/:sessionId/commit", requireAuth, requireRepositoryRead, contributionController.commitSession);
+repoRouter.post("/:repoId/contribution-sessions/:sessionId/pull-request", requireAuth, requireRepositoryRead, contributionController.pullRequestSession);
+repoRouter.post("/:repoId/contribution-sessions/:sessionId/mentor-request", requireAuth, requireRepositoryRead, contributionController.mentorRequest);
+repoRouter.post("/:repoId/contribution-sessions/:sessionId/complete", requireAuth, requireRepositoryRead, contributionController.completeSession);
+repoRouter.get("/:repoId/contribution-sessions/:sessionId/report", requireAuth, requireRepositoryRead, contributionController.report);
 
 // Tags and releases reference canonical embedded commits and stay before /:id.
 repoRouter.get("/:id/tags", optionalAuth, requireRepositoryRead, tagController.list);

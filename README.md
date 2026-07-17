@@ -10,6 +10,8 @@ Run tests with `npm test`. Repository-role migration is manual only:
 
 CodeHub Chat shares the Express HTTP server through Socket.IO, persists conversations and messages in MongoDB, and enforces current repository access on REST and socket events. See `../docs/CODEHUB_CHAT.md` for APIs, privacy, attachment controls, Nginx configuration, testing, and limitations.
 
+Guided Contribution adds authenticated profiles and history at `/contributions`, repository-scoped guides/recommendations/sessions under `/repo/:repoId`, deterministic scoring, and stored-evidence validation. It reuses central permissions and existing branches, commits, pull requests, Actions evidence, notifications, and Mentor Chat; it never executes repository code. See `../docs/GUIDED_CONTRIBUTION_SYSTEM.md`.
+
 ```powershell
 npm run migrate:repository-roles:dry
 npm run migrate:repository-roles

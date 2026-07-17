@@ -10,6 +10,7 @@ const attachment=require("../services/chatAttachmentService");
 const rate=require("../services/chatRateLimitService");
 const presence=require("../services/presenceService");
 const lifecycle=require("../services/chatLifecycleService");
+const participants=require("../services/chatParticipantService");
 const Conversation=require("../models/conversationModel");
 const Member=require("../models/conversationMemberModel");
 const Message=require("../models/chatMessageModel");
@@ -30,6 +31,7 @@ test("socket authentication accepts auth and Bearer tokens and rejects a missing
   await new Promise((resolve,reject)=>middleware(socket,error=>error?reject(error):resolve()));
   assert.equal(socket.userId,"507f1f77bcf86cd799439011");
   await new Promise(resolve=>socketAuth({secret:"test-secret"})({handshake:{auth:{},headers:{}}},error=>{assert.equal(error.data.error,"AUTHENTICATION_REQUIRED");resolve();}));
+  await new Promise(resolve=>socketAuth({secret:"test-secret"})({handshake:{auth:{token:"not-a-jwt"},headers:{}}},error=>{assert.equal(error.data.error,"INVALID_AUTHENTICATION");resolve();}));
 });
 
 test("direct conversation keys are order-independent and self messaging is rejected",async()=>{
@@ -70,6 +72,24 @@ test("multiple sockets preserve online state until final disconnect",async()=>{
   assert.equal(presence.isOnline("user"),true);
   await new Promise(resolve=>{presence.disconnect("user","two",{delay:0,UserModel:{updateOne:async()=>{}},onOffline:resolve});});
   assert.equal(presence.isOnline("user"),false);
+});
+
+test("presence normalizes IDs and counts users rather than sockets",()=>{
+  presence.sockets.clear();presence.addSocket({_id:"owner"},"one");presence.addSocket("owner","two");presence.addSocket({id:"member"},"three");
+  assert.equal(presence.getOnlineCount(["owner",{_id:"owner"},{id:"member"}]),2);
+  assert.deepEqual(presence.getOnlineUserIds([{_id:"owner"},"member"]),["owner","member"]);
+  presence.removeSocket("owner","one");assert.equal(presence.isOnline("owner"),true);presence.removeSocket("owner","two");assert.equal(presence.isOnline("owner"),false);presence.removeSocket("member","three");
+});
+
+test("repository participants include the owner fallback and deduplicate membership IDs",async()=>{
+  const repository={_id:"507f1f77bcf86cd799439010",owner:"507f1f77bcf86cd799439011",visibility:"private"},owner={_id:repository.owner,username:"Puskar"},member={_id:"507f1f77bcf86cd799439012",username:"member"};
+  const values=await participants.getAuthorizedConversationParticipants({_id:"507f1f77bcf86cd799439013",type:"repository",repository:repository._id},{skipViewerCheck:true,RepositoryMemberModel:{find:()=>({populate:()=>({lean:async()=>[{repository:repository._id,user:owner,role:"viewer",status:"active"},{repository:repository._id,user:member,role:"maintainer",status:"active"}]})})},UserModel:{findById:()=>({select:()=>({lean:async()=>owner})})},repositoryDependencies:{RepositoryModel:{findById:async()=>repository},MemberModel:{findOne:async()=>null}}});
+  assert.equal(values.length,2);assert.equal(values[0].role,"owner");assert.equal(values[1].role,"maintainer");
+});
+
+test("backend startup has one HTTP listener and no Express app.listen",()=>{
+  const source=require("node:fs").readFileSync(require("node:path").join(__dirname,"..","index.js"),"utf8");
+  assert.match(source,/http\.createServer\(app\)/);assert.equal((source.match(/httpServer\.listen\(/g)||[]).length,1);assert.doesNotMatch(source,/\bapp\.listen\(/);
 });
 
 test("repository deletion lifecycle archives repository, issue, and pull-request conversations",async()=>{

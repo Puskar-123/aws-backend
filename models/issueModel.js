@@ -15,6 +15,9 @@ const CommentSchema = new Schema({
   updatedAt: { type: Date, default: Date.now },
 }, { _id: true });
 
+const RelevantFileSchema=new Schema({path:{type:String,required:true,maxlength:1000},reason:{type:String,default:"",maxlength:1000},relevance:{type:String,enum:["required","likely","possible","avoid"],default:"likely"}},{_id:false});
+const CompletionCheckSchema=new Schema({key:{type:String,required:true,maxlength:100},label:{type:String,required:true,maxlength:300},checkType:{type:String,required:true,maxlength:80},configuration:{type:Schema.Types.Mixed,default:{}},required:{type:Boolean,default:true},weight:{type:Number,default:1,min:0,max:100}},{_id:false});
+
 const IssueSchema = new Schema({
   repository: { type: Schema.Types.ObjectId, ref: "Repository", required: true, index: true },
   // Legacy documents predate repository-scoped numbers. New writes always set it.
@@ -36,6 +39,7 @@ const IssueSchema = new Schema({
   closedBy: { ...IdentityRef, default: null },
   closedAt: { type: Date, default: null },
   comments: { type: [CommentSchema], default: [] },
+  contributionGuide:{enabled:{type:Boolean,default:false},difficulty:{type:String,enum:["beginner","intermediate","advanced"],default:"beginner"},estimatedMinutes:{type:Number,default:null,min:5,max:2880},requiredSkills:{type:[String],default:[]},optionalSkills:{type:[String],default:[]},taskType:{type:String,default:"",maxlength:100},projectArea:{type:String,default:"",maxlength:100},beginnerFriendly:{type:Boolean,default:false},relevantFiles:{type:[RelevantFileSchema],default:[]},completionChecks:{type:[CompletionCheckSchema],default:[]},maintainerNotes:{type:String,default:"",maxlength:5000},configuredBy:{...IdentityRef,default:null},configuredAt:{type:Date,default:null}},
 }, { timestamps: true });
 
 IssueSchema.index(
