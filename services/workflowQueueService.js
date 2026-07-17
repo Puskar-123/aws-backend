@@ -44,7 +44,7 @@ async function enqueueWorkflow({ repository, workflow, trigger, branch, commitHa
   try {
     const run = await RunModel.create({
       repository: repository._id || repository, workflow: workflow._id, workflowPath: workflow.path,
-      workflowName: workflow.name, definitionSnapshot: workflow.parsedDefinition, trigger, branch, commitHash,
+      workflowName: workflow.name, workflowType: workflow.workflowType || "standard", definitionSnapshot: workflow.parsedDefinition, trigger, branch, commitHash,
       commitMessage, pullRequest, actor, attempt, previousRun, eventKey, jobs: buildJobs(workflow.parsedDefinition),
     });
     await createCheckRuns(run, dependencies);

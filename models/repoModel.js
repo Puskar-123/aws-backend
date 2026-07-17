@@ -212,6 +212,7 @@ const RepositorySchema = new Schema(
     addedBy: { type: Schema.Types.ObjectId, ref: "User", required: true },
     addedAt: { type: Date, default: Date.now },
   }],
+  repositoryRolesMigrationVersion: { type: Number, default: undefined },
 
   issues: [
     {

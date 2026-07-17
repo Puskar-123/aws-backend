@@ -3,9 +3,10 @@ const Repository = require("../models/repoModel");
 const { s3, S3_BUCKET } = require("../config/aws-config");
 const { isSensitiveRepoPath } = require("../utils/repoPath");
 const { social: repositorySocial } = require("./repositorySocialController");
-const { canViewRepository, permissionSummary, getRepositoryRole, hasRepositoryPermission } = require("../services/repositoryPermissionService");
+const { canViewRepository, permissionSummary, getRepositoryRole, hasRepositoryPermission, resolveRepositoryPermissionContext, getEffectiveMembershipStatus } = require("../services/repositoryPermissionService");
 const { assertCanDirectWrite, getProtectionSummary } = require("../services/branchProtectionService");
 const { getUserRepositoryStats } = require("../services/repositoryStatisticsService");
+const RepositoryMember = require("../models/repositoryMemberModel");
 
 function withoutAccessLists(document) {
   const value = document?.toObject ? document.toObject() : { ...document };
@@ -16,6 +17,14 @@ function withoutAccessLists(document) {
   delete value.forkedBy;
   delete value.pendingCommits;
   return value;
+}
+async function visibleMembershipsForUser(userId) {
+  if (!userId || mongoose.connection.readyState !== 1) return [];
+  const memberships = await RepositoryMember.find({ user: userId, status: { $ne: "suspended" } }).lean();
+  return memberships.filter((membership) => {
+    const status = getEffectiveMembershipStatus(membership, null);
+    return status === "active" || (status === "expired" && membership.retainViewerAfterExpiry);
+  });
 }
 
 // ✅ CREATE REPOSITORY
@@ -136,8 +145,10 @@ Created using CodeHub 🚀
 async function getAllRepositories(req, res) {
     try {
       const userId = req.user?.id;
+      const visibleMemberships = await visibleMembershipsForUser(userId);
+      const memberRepositoryIds = visibleMemberships.map((membership) => membership.repository);
       const filter = userId
-        ? { $or: [{ visibility: { $ne: "private" } }, { owner: userId }, { "collaborators.user": userId }] }
+        ? { $or: [{ visibility: { $ne: "private" } }, { owner: userId }, { "collaborators.user": userId }, ...(memberRepositoryIds.length ? [{ _id: { $in: memberRepositoryIds } }] : [])] }
         : { visibility: { $ne: "private" } };
       const repositories = await Repository.find(filter)
         .populate("owner", "_id username name avatarUrl")
@@ -177,7 +188,7 @@ async function fetchRepositoryById(req, res) {
     });
     response.content = response.content.filter((file) => !protectedFiles.includes(file));
     response.social = await repositorySocial(repository, req.user?.id || null);
-    Object.assign(response, permissionSummary(repository, req.user?.id || null));
+    Object.assign(response, permissionSummary(repository, req.user?.id || null, req.repositoryMembership));
     const selectedBranch = req.query?.branch || repository.defaultBranch || "main";
     response.branchProtection = getProtectionSummary(repository, selectedBranch, req.user?.id || null);
     response.currentBranch = selectedBranch;
@@ -226,7 +237,8 @@ async function fetchRepositoryByName(req, res) {
       return res.status(404).json({ error: "Repository not found!" });
     }
 
-    if (!canViewRepository(repository, req.user?.id || null)) {
+    const context = await resolveRepositoryPermissionContext(repository, req.user?.id || null);
+    if (!canViewRepository(repository, req.user?.id || null, { membership: context.membership })) {
       return res.status(req.user?.id ? 403 : 401).json({ error: req.user?.id ? "You do not have access to this repository" : "Authentication required" });
     }
 
@@ -252,16 +264,20 @@ async function fetchRepositoriesForCurrentUser(req, res) {
     }
 
     const fields = "_id name description visibility language owner collaborators updatedAt createdAt";
-    const [owned, shared, statistics] = await Promise.all([
+    const visibleMemberships = await visibleMembershipsForUser(userID);
+    const memberRepositoryIds = visibleMemberships.map((membership) => membership.repository);
+    const [owned, shared, statistics, memberships] = await Promise.all([
       Repository.find({ owner: userID }).select(fields).populate("owner", "_id username name avatarUrl").lean(),
-      Repository.find({ "collaborators.user": userID }).select(fields).populate("owner", "_id username name avatarUrl").lean(),
+      Repository.find({ $or: [{ "collaborators.user": userID }, ...(memberRepositoryIds.length ? [{ _id: { $in: memberRepositoryIds } }] : [])] }).select(fields).populate("owner", "_id username name avatarUrl").lean(),
       getUserRepositoryStats(userID),
+      visibleMemberships,
     ]);
+    const membershipsByRepository = new Map(memberships.map((member) => [String(member.repository), member]));
     const myRepositories = owned.map(({ collaborators, ...repository }) => repository);
     const sharedRepositories = shared
       .filter((repository) => String(repository.owner?._id || repository.owner) !== String(userID))
       .map((repository) => {
-        const currentUserRole = getRepositoryRole(repository, userID);
+        const currentUserRole = getRepositoryRole(repository, userID, membershipsByRepository.get(String(repository._id)));
         const { collaborators, ...safe } = repository;
         return { ...safe, currentUserRole };
       });

@@ -8,13 +8,14 @@ const User = require("../models/userModel");
 const { s3, S3_BUCKET } = require("../config/aws-config");
 const { normalizeRepoPath, isDefaultIgnoredRepoPath } = require("../utils/repoPath");
 const { validateBranchName, ensureDefaultBranch } = require("../utils/branches");
-const { canViewRepository, getRepositoryRole, hasRepositoryPermission } = require("../services/repositoryPermissionService");
+const { canViewRepository, getRepositoryRole, hasRepositoryPermission, resolveRepositoryPermissionContext } = require("../services/repositoryPermissionService");
 const { assertCanDirectWrite, getProtectionSummary } = require("../services/branchProtectionService");
 const { detectRepositoryLanguage } = require("../services/repositoryLanguageService");
 const { safeNotifyRepositoryWatchers } = require("../services/notificationService");
 const { notifyReviewersOfNewHead } = require("../services/reviewNotificationService");
 const { safeScheduleCommitWorkflows } = require("../services/workflowEventService");
 const { isWorkflowPath } = require("../services/workflowDiscoveryService");
+const { REPOSITORY_PERMISSIONS } = require("../constants/repositoryPermissions");
 
 const MAX_FILE_SIZE = 25 * 1024 * 1024;
 const MAX_TOTAL_SIZE = 100 * 1024 * 1024;
@@ -51,7 +52,8 @@ function createRepositoryCliController({ RepositoryModel = Repository, UserModel
     try {
       const repository = await RepositoryModel.findOne({ name: req.params.name }).populate("owner", "_id username name avatarUrl");
       if (!repository || String(repository.owner?.username || "").toLowerCase() !== String(req.params.owner || "").toLowerCase()) throw httpError(404, "Repository not found", "REPOSITORY_NOT_FOUND");
-      if (!canViewRepository(repository, req.user?.id)) throw httpError(req.user?.id ? 403 : 401, req.user?.id ? "You do not have access to this repository" : "Authentication required", req.user?.id ? "PERMISSION_DENIED" : "AUTH_REQUIRED");
+      const context = await resolveRepositoryPermissionContext(repository, req.user?.id);
+      if (!canViewRepository(repository, req.user?.id, { membership: context.membership })) throw httpError(req.user?.id ? 403 : 401, req.user?.id ? "You do not have access to this repository" : "Authentication required", req.user?.id ? "PERMISSION_DENIED" : "AUTH_REQUIRED");
       return res.json({ repository: { _id: repository._id, owner: repository.owner?.username, name: repository.name, visibility: repository.visibility, defaultBranch: repository.defaultBranch || "main" } });
     } catch (error) { return res.status(error.status || 500).json({ error: error.status ? error.message : "Unable to resolve repository", ...(error.code ? { code: error.code } : {}) }); }
   }
@@ -62,9 +64,12 @@ function createRepositoryCliController({ RepositoryModel = Repository, UserModel
       if (!repository) throw httpError(404, "Repository not found", "REPOSITORY_NOT_FOUND");
       if (repository.populate && !repository.owner?.username) await repository.populate("owner", "_id username name avatarUrl");
       const defaultBranch = ensureDefaultBranch(repository);
-      const role = getRepositoryRole(repository, req.user?.id);
+      const legacyRole = (repository.collaborators || []).find((item) => idOf(item.user) === idOf(req.user?.id))?.role;
+      const role = req.repositoryRole || legacyRole || getRepositoryRole(repository, req.user?.id);
       const branches = (repository.branches || []).map((branch) => ({ name: branch.name, head: branch.head || null, isDefault: branch.name === defaultBranch.name || branch.isDefault, protection: getProtectionSummary(repository, branch.name, req.user?.id) }));
-      return res.json({ repository: { _id: repository._id, owner: repository.owner?.username || idOf(repository.owner), name: repository.name, visibility: repository.visibility, defaultBranch: defaultBranch.name }, currentUserRole: role || (repository.visibility === "public" ? "public" : null), branches, permissions: { canClone: true, canPull: true, canPush: hasRepositoryPermission(repository, req.user?.id, "write_files"), canPushToDefaultBranch: hasRepositoryPermission(repository, req.user?.id, "write_files") && !(() => { try { assertCanDirectWrite(repository, defaultBranch.name, req.user?.id, "cli_metadata"); return false; } catch { return true; } })() } });
+      const canPush = hasRepositoryPermission(repository, req.user?.id, REPOSITORY_PERMISSIONS.BRANCH_PUSH, { membership: req.repositoryMembership });
+      const canPushDefault = hasRepositoryPermission(repository, req.user?.id, REPOSITORY_PERMISSIONS.BRANCH_PUSH, { membership: req.repositoryMembership, branch: defaultBranch.name });
+      return res.json({ repository: { _id: repository._id, owner: repository.owner?.username || idOf(repository.owner), name: repository.name, visibility: repository.visibility, defaultBranch: defaultBranch.name }, currentUserRole: role || (repository.visibility === "public" ? "public" : null), branches, permissions: { canClone: true, canPull: true, canPush, canPushToDefaultBranch: canPushDefault && !(() => { try { assertCanDirectWrite(repository, defaultBranch.name, req.user?.id, "cli_metadata"); return false; } catch { return true; } })() } });
     } catch (error) { return res.status(error.status || 500).json({ error: error.status ? error.message : "Unable to load CLI metadata", ...(error.code ? { code: error.code } : {}) }); }
   }
 

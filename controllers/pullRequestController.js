@@ -23,6 +23,7 @@ const { hasRepositoryPermission } = require("../services/repositoryPermissionSer
 const { assertCanMergePullRequest, evaluateMergeProtection, assertRequiredStatusChecks, evaluateRequiredStatusChecks } = require("../services/branchProtectionService");
 const { getEffectiveReviewSummary, getRequestedReviewerStatus, threadIsOutdated } = require("../services/pullRequestReviewService");
 const { safeSchedulePullRequestWorkflows } = require("../services/workflowEventService");
+const { REPOSITORY_PERMISSIONS } = require("../constants/repositoryPermissions");
 
 const safeAuthorFields = "_id username name avatarUrl";
 
@@ -210,6 +211,8 @@ function createPullRequestController({
           canMerge: hasRepositoryPermission(req.repository, authenticatedUserId, "merge_pr") && protection.requirementsPassed,
           canComment: Boolean(authenticatedUserId),
           canReviewDecision: hasRepositoryPermission(req.repository, authenticatedUserId, "review_pr"),
+          canViewTests: hasRepositoryPermission(req.repository, authenticatedUserId, REPOSITORY_PERMISSIONS.TEST_VIEW),
+          canSubmitTestResult: hasRepositoryPermission(req.repository, authenticatedUserId, REPOSITORY_PERMISSIONS.TEST_SUBMIT_RESULT),
           isAuthor: Boolean(authenticatedUserId) && idOf(pullRequest.author) === authenticatedUserId,
         },
         mergeability: {

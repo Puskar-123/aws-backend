@@ -1,7 +1,7 @@
 const jwt = require("jsonwebtoken");
 
 function readAuthenticatedUser(req) {
-  const authorization = req.headers.authorization || "";
+  const authorization = req.headers?.authorization || "";
   if (!authorization.startsWith("Bearer ")) return null;
   try {
     const payload = jwt.verify(authorization.slice(7), process.env.JWT_SECRET_KEY);

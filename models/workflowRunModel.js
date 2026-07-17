@@ -24,6 +24,7 @@ const WorkflowRunSchema = new Schema({
   repository: { type: Schema.Types.ObjectId, ref: "Repository", required: true, index: true },
   workflow: { type: Schema.Types.ObjectId, ref: "WorkflowDefinition", required: true },
   workflowPath: { type: String, required: true, maxlength: 1000 }, workflowName: { type: String, required: true, maxlength: 200 },
+  workflowType: { type: String, enum: ["standard", "test", "deployment"], default: "standard", index: true },
   definitionSnapshot: { type: Schema.Types.Mixed, required: true, select: false },
   trigger: { type: String, enum: ["push", "pull_request", "workflow_dispatch", "release"], required: true },
   status: { type: String, enum: STATUSES, default: "queued", index: true },

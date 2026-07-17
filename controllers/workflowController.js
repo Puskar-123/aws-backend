@@ -7,10 +7,17 @@ const { s3, S3_BUCKET } = require("../config/aws-config");
 const { getRepositoryRole } = require("../services/repositoryPermissionService");
 const { discoverWorkflows } = require("../services/workflowDiscoveryService");
 const { cancelRun, enqueueWorkflow, rerunWorkflow, safeRun, TERMINAL } = require("../services/workflowQueueService");
+const { REPOSITORY_ROLES } = require("../constants/repositoryPermissions");
 
 function actionError(status, message, code) { return Object.assign(new Error(message), { status, code }); }
 const sendError = (res, error) => res.status(error.status || 500).json({ error: error.status ? error.message : "Unable to manage workflows", code: error.code });
 const canManage = (repository, userId) => ["owner", "maintainer"].includes(getRepositoryRole(repository, userId));
+const isDeploymentManager = (req) => (req.repositoryRole || getRepositoryRole(req.repository, req.user?.id)) === REPOSITORY_ROLES.DEPLOYMENT_MANAGER;
+const isTester = (req) => (req.repositoryRole || getRepositoryRole(req.repository, req.user?.id)) === REPOSITORY_ROLES.TESTER;
+function assertDeploymentScope(req, workflowOrRun) {
+  if (isDeploymentManager(req) && workflowOrRun?.workflowType !== "deployment") throw actionError(403, "Deployment Manager can only manage workflows explicitly marked as deployment workflows", "PERMISSION_DENIED");
+  if (isTester(req) && workflowOrRun?.workflowType !== "test") throw actionError(403, "Tester can only trigger workflows explicitly marked as test workflows", "PERMISSION_DENIED");
+}
 const escapeRegex = (value) => String(value || "").replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 function parsePagination(query = {}) { const page = Math.max(1, Number.parseInt(query.page, 10) || 1); const limit = Math.min(50, Math.max(1, Number.parseInt(query.limit, 10) || 20)); return { page, limit, skip: (page - 1) * limit }; }
 function publicCanSeeActive(req) { return Boolean(getRepositoryRole(req.repository, req.user?.id)); }
@@ -27,7 +34,8 @@ async function findRun(req, includeDefinition = false) {
 async function workflows(req, res) {
   try {
     const items = await WorkflowDefinition.find({ repository: req.repository._id }).sort({ enabled: -1, name: 1 }).select("-parsedDefinition").lean();
-    return res.json({ workflows: items, canManage: canManage(req.repository, req.user?.id) });
+    const scoped = isDeploymentManager(req) ? "deployment" : (isTester(req) ? "test" : null);
+    return res.json({ workflows: items.map((item) => { const canTrigger = canManage(req.repository, req.user?.id) || Boolean(scoped && item.workflowType === scoped); return { ...item, canTrigger, enabled: canTrigger ? item.enabled : false }; }), canManage: canManage(req.repository, req.user?.id) || Boolean(scoped) });
   } catch (error) { return sendError(res, error); }
 }
 async function runs(req, res) {
@@ -48,7 +56,7 @@ async function runs(req, res) {
       WorkflowRun.countDocuments(filter),
       WorkflowRun.aggregate([{ $match: { repository: req.repository._id, ...(!publicCanSeeActive(req) ? { status: { $in: [...TERMINAL] } } : {}) } }, { $group: { _id: "$status", count: { $sum: 1 } } }]),
     ]);
-    return res.json({ runs: items.map(safeRun), pagination: { page, limit, total, pages: Math.ceil(total / limit) }, counts: Object.fromEntries(counts.map((row) => [row._id, row.count])), canManage: canManage(req.repository, req.user?.id) });
+    return res.json({ runs: items.map(safeRun), pagination: { page, limit, total, pages: Math.ceil(total / limit) }, counts: Object.fromEntries(counts.map((row) => [row._id, row.count])), canManage: canManage(req.repository, req.user?.id) || isDeploymentManager(req) || isTester(req) });
   } catch (error) { return sendError(res, error); }
 }
 async function details(req, res) {
@@ -66,7 +74,7 @@ async function logs(req, res) {
 }
 async function dispatch(req, res) {
   try {
-    if (!canManage(req.repository, req.user?.id)) throw actionError(403, "Owner or maintainer access is required", "PERMISSION_DENIED");
+    if (!canManage(req.repository, req.user?.id) && !isDeploymentManager(req) && !isTester(req)) throw actionError(403, "Workflow management permission is required", "PERMISSION_DENIED");
     if (!mongoose.Types.ObjectId.isValid(req.params.workflowId)) throw actionError(400, "Invalid workflow ID", "WORKFLOW_NOT_FOUND");
     const branchName = String(req.body?.branch || req.repository.defaultBranch || "main");
     const branch = (req.repository.branches || []).find((item) => item.name === branchName);
@@ -74,6 +82,7 @@ async function dispatch(req, res) {
     const discovered = await discoverWorkflows({ repository: req.repository, commitHash: branch.head, storage: s3, bucket: S3_BUCKET });
     const workflow = discovered.find((item) => String(item._id) === req.params.workflowId || item.path === req.body?.workflowPath);
     if (!workflow) throw actionError(404, "Workflow was not found at this branch head", "WORKFLOW_NOT_FOUND");
+    assertDeploymentScope(req, workflow);
     if (workflow.validationStatus !== "valid") throw actionError(400, "Workflow is invalid", "WORKFLOW_INVALID");
     if (!workflow.triggers.includes("workflow_dispatch")) throw actionError(409, "Workflow does not support manual dispatch", "WORKFLOW_DISABLED");
     const commit = (req.repository.commits || []).find((item) => String(item.hash || item._id) === String(branch.head));
@@ -83,8 +92,9 @@ async function dispatch(req, res) {
 }
 async function cancel(req, res) {
   try {
-    if (!canManage(req.repository, req.user?.id)) throw actionError(403, "Owner or maintainer access is required", "PERMISSION_DENIED");
-    const result = await cancelRun(await findRun(req, true));
+    if (!canManage(req.repository, req.user?.id) && !isDeploymentManager(req)) throw actionError(403, "Workflow management permission is required", "PERMISSION_DENIED");
+    const target = await findRun(req, true); assertDeploymentScope(req, target);
+    const result = await cancelRun(target);
     return res.json({ message: result.idempotent ? "Workflow was already completed" : "Cancellation requested", idempotent: result.idempotent, run: safeRun(result.run) });
   } catch (error) { return sendError(res, error); }
 }

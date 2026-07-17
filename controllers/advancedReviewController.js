@@ -1,6 +1,7 @@
 const mongoose = require("mongoose");
 const PullRequest = require("../models/pullRequestModel");
 const User = require("../models/userModel");
+const RepositoryMember = require("../models/repositoryMemberModel");
 const { s3, S3_BUCKET } = require("../config/aws-config");
 const { compareRepository } = require("../services/compareService");
 const { branchByName } = require("../services/branchService");
@@ -75,12 +76,15 @@ function createAdvancedReviewController({
     try {
       const pullRequest = await findPull(req.repository._id, req.params.number);
       if (!pullRequest) throw httpError(404, "Pull request not found");
-      const candidateIds = [...new Set([req.repository.owner, ...(req.repository.collaborators || []).map((item) => item.user)].map(idOf))]
-        .filter((id) => id !== idOf(pullRequest.author) && hasRepositoryPermission(req.repository, id, "review_pr"));
+      const storedMembers = mongoose.connection.readyState === 1
+        ? await RepositoryMember.find({ repository: req.repository._id, status: "active" }).lean() : [];
+      const membershipByUser = new Map(storedMembers.map((member) => [idOf(member.user), member]));
+      const candidateIds = [...new Set([req.repository.owner, ...(req.repository.collaborators || []).map((item) => item.user), ...storedMembers.map((item) => item.user)].map(idOf))]
+        .filter((id) => id !== idOf(pullRequest.author) && hasRepositoryPermission(req.repository, id, "review_pr", { membership: membershipByUser.get(id) }));
       const users = candidateIds.length ? await UserModel.find({ _id: { $in: candidateIds } }).select(identityFields) : [];
       const requested = getRequestedReviewerStatus(pullRequest, req.repository).filter((item) => item.status !== "removed").map((item) => ({ ...asObject(item), user: safeIdentity(item.user), requestedBy: safeIdentity(item.requestedBy) }));
       const requestedIds = new Set(requested.map((item) => idOf(item.user)));
-      return res.json({ requestedReviewers: requested, candidates: users.map((user) => ({ ...safeIdentity(user), role: getRepositoryRole(req.repository, user._id) })).filter((user) => !requestedIds.has(idOf(user))) });
+      return res.json({ requestedReviewers: requested, candidates: users.map((user) => ({ ...safeIdentity(user), role: getRepositoryRole(req.repository, user._id, membershipByUser.get(idOf(user))) })).filter((user) => !requestedIds.has(idOf(user))) });
     } catch (error) { return sendError(res, error); }
   }
 
@@ -101,7 +105,9 @@ function createAdvancedReviewController({
       }
       if (!reviewer) throw httpError(404, "Reviewer not found");
       if (idOf(reviewer) === idOf(pullRequest.author)) throw httpError(400, "The pull request author cannot be requested as a reviewer");
-      if (!hasRepositoryPermission(req.repository, reviewer._id, "review_pr")) throw httpError(403, "Reviewer no longer has review access to this repository");
+      const reviewerMembership = mongoose.connection.readyState === 1
+        ? await RepositoryMember.findOne({ repository: req.repository._id, user: reviewer._id }) : null;
+      if (!hasRepositoryPermission(req.repository, reviewer._id, "review_pr", { membership: reviewerMembership })) throw httpError(403, "Reviewer no longer has review access to this repository");
       const existing = (pullRequest.requestedReviewers || []).find((item) => idOf(item.user) === idOf(reviewer) && item.status !== "removed");
       if (existing) throw httpError(409, "Review has already been requested from this user");
       const previous = (pullRequest.requestedReviewers || []).find((item) => idOf(item.user) === idOf(reviewer));

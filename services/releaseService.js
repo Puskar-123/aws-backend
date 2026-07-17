@@ -1,6 +1,8 @@
 const path = require("path");
 const crypto = require("crypto");
 const { isSensitiveRepoPath } = require("../utils/repoPath");
+const { hasRepositoryPermission } = require("./repositoryPermissionService");
+const { REPOSITORY_PERMISSIONS } = require("../constants/repositoryPermissions");
 
 const MAX_ASSET_SIZE = 100 * 1024 * 1024;
 const MAX_ASSETS = 20;
@@ -9,9 +11,7 @@ const FORBIDDEN_ASSET_EXTENSIONS = new Set([".bat", ".cmd", ".com", ".ps1", ".sc
 
 function releaseError(status, message, code) { return Object.assign(new Error(message), { status, code }); }
 function canManageReleases(repository, userId) {
-  const id = String(userId || "");
-  if (String(repository.owner?._id || repository.owner || "") === id) return true;
-  return (repository.collaborators || []).some((item) => String(item.user?._id || item.user) === id && item.role === "maintainer");
+  return hasRepositoryPermission(repository, userId, REPOSITORY_PERMISSIONS.RELEASE_UPDATE);
 }
 function assertReleaseManager(repository, userId) {
   if (!canManageReleases(repository, userId)) throw releaseError(403, "Owner or maintainer access is required", "RELEASE_PERMISSION_DENIED");

@@ -5,6 +5,7 @@ const WorkflowDefinitionSchema = new Schema({
   repository: { type: Schema.Types.ObjectId, ref: "Repository", required: true, index: true },
   path: { type: String, required: true, maxlength: 1000 },
   name: { type: String, required: true, maxlength: 200 },
+  workflowType: { type: String, enum: ["standard", "test", "deployment"], default: "standard", index: true },
   triggers: [{ type: String, enum: ["push", "pull_request", "workflow_dispatch", "release"] }],
   parsedDefinition: { type: Schema.Types.Mixed, required: true },
   sourceCommitHash: { type: String, required: true, maxlength: 200 },

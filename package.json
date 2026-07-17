@@ -8,6 +8,8 @@
     "test": "node --test",
     "migrate:users": "node scripts/migrateUsersToPrimaryDatabase.js",
     "audit:pr-users": "node scripts/auditPullRequestUserRefs.js",
+    "migrate:repository-roles": "node scripts/migrateRepositoryRoles.js",
+    "migrate:repository-roles:dry": "node scripts/migrateRepositoryRoles.js --dry-run",
     "runner:mock": "node runner/index.js"
   },
   "keywords": [],
