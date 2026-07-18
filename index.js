@@ -92,7 +92,9 @@ function startServer() {
 
   db.once("open", async () => {
     console.log("CRUD operations called");
-    // CRUD operations
+    const {reconcileAllActiveCalls,RECOVERY_TIMEOUT_MS}=require("./services/callService");
+    const recoverySweep=setTimeout(()=>reconcileAllActiveCalls().catch(error=>console.error("Call recovery sweep failed",error?.message||"unknown error")),RECOVERY_TIMEOUT_MS);
+    recoverySweep.unref?.();
   });
 
   httpServer.listen(port, () => {
