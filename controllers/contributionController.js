@@ -124,7 +124,18 @@ async function recommendationsFor(req, res, one = false) {
     const filter = { repository: req.params.repoId, "contributionGuide.enabled": true };
     if (one) Object.assign(filter, /^\d+$/.test(req.params.issueId) ? { number: Number(req.params.issueId) } : { _id: req.params.issueId });
     const issues = await Issue.find(filter).sort({ updatedAt: -1 }).limit(one ? 1 : 100);
-    const recommendations = issues.filter(isOpenIssue).map(issue => ({ ...scoreRecommendation(profile, issue, { eligible: canBranch && canPull }), relevantFiles: analyzeRelevantFiles(access.repository, issue), issueBody: issue.body }));
+    const repositorySummary = { _id: access.repository._id, name: access.repository.name, owner: access.repository.owner, visibility: access.repository.visibility };
+    const recommendations = issues.filter(isOpenIssue).map(issue => ({
+      ...scoreRecommendation(profile, issue, { eligible: canBranch && canPull }),
+      repository: repositorySummary,
+      requiredSkills: issue.contributionGuide.requiredSkills || [],
+      optionalSkills: issue.contributionGuide.optionalSkills || [],
+      taskType: issue.contributionGuide.taskType,
+      projectArea: issue.contributionGuide.projectArea,
+      beginnerFriendly: Boolean(issue.contributionGuide.beginnerFriendly),
+      labels: (issue.labels || []).map(label => ({ name: label.name, color: label.color })),
+      relevantFiles: analyzeRelevantFiles(access.repository, issue), issueBody: issue.body,
+    }));
     if (one && !recommendations.length) throw fail(404, "Guided issue not found", "GUIDED_ISSUE_NOT_FOUND");
     recommendations.sort((a, b) => b.suitabilityScore - a.suitabilityScore || a.issueNumber - b.issueNumber);
     return res.json(one ? { recommendation: recommendations[0], profile } : { recommendations, profile, eligibility: { canCreateBranch: canBranch, canCreatePullRequest: canPull } });
@@ -144,8 +155,16 @@ async function createSession(req, res) {
     if (!eligible) throw fail(403, "Your current repository access cannot start this contribution workflow", "CONTRIBUTION_NOT_ACTIONABLE");
     const recommendation = scoreRecommendation(profile, issue, { eligible });
     const existing = await Session.findOne({ repository: req.params.repoId, issue: issue._id, contributor: userId(req), status: { $in: ACTIVE_SESSION_STATUSES } });
-    if (existing) throw fail(409, "An active guided session already exists for this issue", "DUPLICATE_ACTIVE_SESSION");
-    const session = await Session.create({ repository: req.params.repoId, issue: issue._id, contributor: userId(req), status: "selected", skillProfileSnapshot: profile.toObject(), recommendationSnapshot: recommendation, baseBranch: ensureDefaultBranch(access.repository).name, selectedRelevantFiles: analyzeRelevantFiles(access.repository, issue).map(value => value.path) });
+    if (existing) return res.json({ message: "You already have an active contribution session for this issue.", session: existing, restored: true });
+    let session;
+    try {
+      session = await Session.create({ repository: req.params.repoId, issue: issue._id, contributor: userId(req), status: "selected", skillProfileSnapshot: profile.toObject(), recommendationSnapshot: recommendation, baseBranch: ensureDefaultBranch(access.repository).name, selectedRelevantFiles: analyzeRelevantFiles(access.repository, issue).map(value => value.path) });
+    } catch (error) {
+      if (error?.code !== 11000) throw error;
+      const restored = await Session.findOne({ repository: req.params.repoId, issue: issue._id, contributor: userId(req), status: { $in: ACTIVE_SESSION_STATUSES } });
+      if (!restored) throw error;
+      return res.json({ message: "You already have an active contribution session for this issue.", session: restored, restored: true });
+    }
     await safeNotifyRepositoryWatchers(access.repository, { actor: userId(req), type: "contribution_started", title: `Guided contribution started in ${access.repository.name}`, message: `Issue #${issue.number}: ${issue.title}`, url: sessionUrl(session), eventKey: `contribution-start:${session._id}`, metadata: { session: session._id, issue: issue._id } });
     return res.status(201).json({ message: "Contribution session started", session });
   } catch (error) { return sendError(res, error); }
@@ -163,13 +182,14 @@ async function sessionDetails(req, res) {
     const context = await sessionContext(req);
     const state = await refresh(context.session, context.repository, context.issue);
     const guidance = { suggestedCommitMessage: `${context.issue.contributionGuide?.taskType === "Documentation" ? "docs" : "fix"}: ${context.issue.title} (#${context.issue.number})`, suggestedPullRequestTitle: context.issue.title, suggestedPullRequestDescription: `Guided contribution for issue #${context.issue.number}\n\nDescribe the change, validation evidence, and any remaining limitations.` };
-    return res.json({ session: context.session, issue: context.issue, ...state, guidance, canManage: context.manages });
+    return res.json({ session: context.session, issue: context.issue, repository: { _id: context.repository._id, name: context.repository.name, owner: context.repository.owner, visibility: context.repository.visibility }, ...state, guidance, canManage: context.manages });
   } catch (error) { return sendError(res, error); }
 }
 
 function proposedBranch(user, issue, session) {
   const slug = String(user?.username || user?.name || "contributor").toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "").slice(0, 24) || "contributor";
-  return validateBranchName(`contribute/${slug}/issue-${issue.number || idOf(issue._id).slice(-6)}-${idOf(session._id).slice(-5)}`);
+  const issueSlug = String(issue.title || "contribution").toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "").slice(0, 32) || idOf(session._id).slice(-6);
+  return validateBranchName(`mentor/${slug}/issue-${issue.number || idOf(issue._id).slice(-6)}-${issueSlug}`);
 }
 async function createSessionBranch(req, res) {
   try {
