@@ -1,5 +1,7 @@
 # CodeHub backend
 
+Voice messages and WebRTC call signalling extend the existing authenticated Chat server. See `../docs/CODEHUB_VOICE_AND_CALLING.md` for REST/socket contracts, private storage, TURN variables, permissions, tests, and deployment notes.
+
 ## Project Health Score
 
 `GET /repo/:id/insights/health?range=30d` returns the authorized evidence-based score for 30, 90, or 180 days without executing repository code.

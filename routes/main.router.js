@@ -6,6 +6,7 @@ const notificationRouter = require("./notification.router");
 const invitationRouter = require("./invitation.router");
 const chatRouter = require("./chat.router");
 const contributionRouter = require("./contribution.router");
+const callRouter = require("./call.router");
 const { noStore } = require("../middleware/noStore");
 const publicDiscoveryController = require("../controllers/publicDiscoveryController");
 
@@ -19,6 +20,7 @@ mainRouter.use("/notifications", noStore, notificationRouter);
 mainRouter.use("/invitations", noStore, invitationRouter);
 mainRouter.use("/chat", noStore, chatRouter);
 mainRouter.use("/contributions", noStore, contributionRouter);
+mainRouter.use("/calls", noStore, callRouter);
 mainRouter.get("/search", publicDiscoveryController.search);
 mainRouter.get("/users/:username/repositories", publicDiscoveryController.userRepositories);
 mainRouter.get("/users/:username", publicDiscoveryController.publicProfile);
